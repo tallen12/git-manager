@@ -103,7 +103,8 @@ after it.
 
 ## 5. Finish the feature
 
-Push the feature branch and open a pull request into `main` only when the user asks:
+Push the feature branch and open a pull request into `main` only when the user asks. Write
+the title and description with the `pull-requests` skill:
 
 ```bash
 git push -u origin feat/<feature>
