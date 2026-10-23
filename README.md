@@ -39,7 +39,7 @@ stdio to a running daemon.
 Settings have three sections: `target` (where operations run), `http` (where `serve`
 listens) and `mcp` (the MCP server). Each value can come from, highest first:
 
-1. Flags: `--config`, `--url`, `--socket`, `--http.port`, `--mcp.name`, ...
+1. Flags: `--config`, `--url`, `--socket`, `--plain-http`, `--http.port`, `--mcp.name`, ...
 2. `GM_*` environment variables, nested with `__`: `GM_TARGET__URL`, `GM_HTTP__PORT`.
 3. A `.env` file in the current directory, with the same variable names.
 4. Files in the secrets directory (`/run/secrets`, or `GM_SECRETS_DIR`), one per value,
@@ -47,7 +47,12 @@ listens) and `mcp` (the MCP server). Each value can come from, highest first:
 5. `git-manager.yaml` in the current directory (or the file `GM_SETTINGS_FILE` names).
 
 Nested values merge across sources, except the target: the highest source that names one (`config`, `url` or `socket`) wins it, so `--socket` replaces a `url` from `git-manager.yaml`. The API token has no flag, so it never lands in shell
-history. Copy [`git-manager.example.yaml`](git-manager.example.yaml) to start; relative
+history.
+
+An `http://` URL is accepted only for a loopback host, so the token is never sent
+unencrypted over a network. On a network you trust, such as a compose network, set
+`plain_http: allowed` (`--plain-http allowed` or `GM_TARGET__PLAIN_HTTP`) in the same
+source as the URL: an `allowed` written next to one URL never applies to another. Copy [`git-manager.example.yaml`](git-manager.example.yaml) to start; relative
 paths in it resolve against the current directory. `git-manager.yaml` and `.env` are
 ignored by git, since they may hold a token.
 

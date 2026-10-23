@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from git_manager.core import HttpTarget, LocalTarget, Settings, SocketTarget
+from git_manager.core.targets import PlainHttp
 
 
 @pytest.fixture
@@ -120,13 +121,35 @@ def test_local_and_socket_targets_ignore_the_plain_http_policy(
     assert target == LocalTarget(config=config_file)
 
 
-def test_plain_http_policy_from_settings_file_joins_a_url_flag() -> None:
-    write(Path("git-manager.yaml"), "target:\n  token: t\n  plain_http: allowed\n")
+def test_plain_http_policy_stays_with_the_url_it_was_written_for() -> None:
+    write(Path("git-manager.yaml"), "target:\n  url: http://gm.test\n  plain_http: allowed\n")
 
-    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+    with pytest.raises(ValidationError, match="would send the token unencrypted"):
+        Settings.model_validate({"target": {"url": "http://other.test", "token": "t"}})
+
+
+def test_plain_http_policy_from_the_url_source_applies() -> None:
+    write(
+        Path("git-manager.yaml"),
+        "target:\n  url: http://gm.test\n  token: t\n  plain_http: allowed\n",
+    )
+
+    target = Settings().target
 
     assert isinstance(target, HttpTarget)
-    assert target.url == "http://gm.test"
+    assert target.plain_http is PlainHttp.ALLOWED
+
+
+def test_plain_http_policy_from_a_higher_source_applies_to_a_lower_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write(Path("git-manager.yaml"), "target:\n  url: http://gm.test\n  token: t\n")
+    monkeypatch.setenv("GM_TARGET__PLAIN_HTTP", "allowed")
+
+    target = Settings().target
+
+    assert isinstance(target, HttpTarget)
+    assert target.plain_http is PlainHttp.ALLOWED
 
 
 def test_flag_target_replaces_a_variable_target(

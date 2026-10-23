@@ -14,6 +14,7 @@ from git_manager.core import (
     SocketTarget,
     build_connector,
 )
+from git_manager.core.targets import PlainHttp
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
 
@@ -216,3 +217,51 @@ def test_doctor_reports_an_unexpected_response_as_one_line(
 
     assert status == 1
     assert capsys.readouterr().err.startswith("error: unexpected response from")
+
+
+def test_plain_http_flag_allows_a_remote_url(
+    service: Operations, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, ["doctor", "--url", "http://gm.test", "--plain-http", "allowed"])
+
+    assert status == 0
+    assert [
+        target.plain_http for target in connector.targets if isinstance(target, HttpTarget)
+    ] == [PlainHttp.ALLOWED]
+
+
+def test_other_flags_keep_the_settings_file_plain_http_policy(service: Operations) -> None:
+    Path("git-manager.yaml").write_text(
+        "target:\n  url: http://gm.test\n  token: t\n  plain_http: allowed\n",
+        encoding="utf-8",
+    )
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, ["doctor", "--http.port", "9000"])
+
+    assert status == 0
+    assert [
+        target.plain_http for target in connector.targets if isinstance(target, HttpTarget)
+    ] == [PlainHttp.ALLOWED]
+
+
+def test_url_flag_does_not_inherit_the_settings_file_plain_http_policy(
+    service: Operations, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Path("git-manager.yaml").write_text(
+        "target:\n  url: http://gm.test\n  token: t\n  plain_http: allowed\n",
+        encoding="utf-8",
+    )
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, ["doctor", "--url", "http://other.test"])
+
+    assert status == 2
+    assert connector.targets == []
+    assert "would send the token unencrypted" in capsys.readouterr().err

@@ -25,7 +25,13 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from git_manager.core.targets import HTTP_ONLY_OPTIONS, NO_TARGET, TARGET_OPTIONS, Target
+from git_manager.core.targets import (
+    HTTP_ONLY_OPTIONS,
+    NO_TARGET,
+    TARGET_BOUND_OPTIONS,
+    TARGET_OPTIONS,
+    Target,
+)
 from git_manager.mcp.settings import McpSettings
 from git_manager.web.settings import HttpSettings
 
@@ -61,8 +67,9 @@ class _TargetPrecedenceSource(PydanticBaseSettingsSource):
 
     Plain deep merging would combine ``url`` from the settings file with ``--socket`` from a
     flag and fail as two targets. Here the highest source that names a target wins it, and
-    lower sources lose their target-naming options. Other target values, like a token,
-    still merge from any source.
+    lower sources lose their target-naming options and ``plain_http``, so an opt-in written
+    for one URL never reaches another. Other target values, like a token, still merge from
+    any source.
     """
 
     def __init__(
@@ -85,7 +92,7 @@ class _TargetPrecedenceSource(PydanticBaseSettingsSource):
             target = values.get("target")
             if target_chosen and isinstance(target, Mapping):
                 values["target"] = {
-                    key: value for key, value in target.items() if key not in TARGET_OPTIONS
+                    key: value for key, value in target.items() if key not in TARGET_BOUND_OPTIONS
                 }
             elif _names_target(target):
                 target_chosen = True

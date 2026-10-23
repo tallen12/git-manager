@@ -130,6 +130,9 @@ class SocketTarget(BaseModel):
 _TARGET_TAGS = {"config": "local", "url": "http", "socket": "socket"}
 # The options that name a target; any one of them chooses the variant.
 TARGET_OPTIONS = frozenset(_TARGET_TAGS)
+# Options that come only from the source that names the target. ``plain_http`` is here so an
+# ``allowed`` written for one URL never applies to another URL from a higher source.
+TARGET_BOUND_OPTIONS = TARGET_OPTIONS | {"plain_http"}
 # Options that only mean something next to a URL. One environment or secrets directory
 # serves every mode, so a local or socket target ignores them.
 HTTP_ONLY_OPTIONS = frozenset({"token", "plain_http"})
