@@ -6,7 +6,15 @@ from pathlib import Path
 import pytest
 
 from git_manager.cli.main import build_app
-from git_manager.core import HttpTarget, LocalTarget, Operations, SocketTarget, build_connector
+from git_manager.core import (
+    ApiResponseError,
+    HttpTarget,
+    LocalTarget,
+    Operations,
+    SocketTarget,
+    build_connector,
+)
+from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
 
 
@@ -129,7 +137,12 @@ def test_server_commands_need_a_target_too(
         (["doctor", "--config", "missing.yaml"], "error: --config missing.yaml: Path does not"),
         (["--socket", "api.sock", "doctor", "--http.port", "x"], "error: http.port: Input should"),
     ],
-    ids=["invalid-flag-value", "unknown-flag", "missing-config", "invalid-section-flag"],
+    ids=[
+        "invalid-flag-value",
+        "unknown-flag",
+        "missing-config",
+        "invalid-section-flag",
+    ],
 )
 def test_invalid_flags_print_one_line_errors(
     service: Operations,
@@ -163,3 +176,23 @@ def test_doctor_reads_target_from_settings_file(
     assert status == 2
     assert connector.targets == []
     assert capsys.readouterr().err == "error: http.prot: Extra inputs are not permitted\n"
+
+
+class UnexpectedResponseOperations:
+    """Answers health like a server that is not Git Manager."""
+
+    async def health(self) -> HealthStatus:
+        raise ApiResponseError("unexpected response from http://127.0.0.1:8765/healthz")
+
+
+def test_doctor_reports_an_unexpected_response_as_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    app = build_app(
+        connect=RecordingConnector(UnexpectedResponseOperations()), version=TEST_VERSION
+    )
+
+    status = run_cli(app, ["doctor", "--socket", str(tmp_path / "api.sock")])
+
+    assert status == 1
+    assert capsys.readouterr().err.startswith("error: unexpected response from")

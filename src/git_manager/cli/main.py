@@ -11,6 +11,7 @@ from pydantic_core import ErrorDetails
 
 from git_manager.core import (
     ApiError,
+    ApiResponseError,
     ApiUnreachableError,
     Connector,
     Service,
@@ -68,7 +69,7 @@ def build_app(*, connect: Connector, version: str) -> App:
         async with connect(settings.target) as operations:
             try:
                 status = await operations.health()
-            except (ApiError, ApiUnreachableError) as error:
+            except (ApiError, ApiResponseError, ApiUnreachableError) as error:
                 print(f"error: {error}", file=sys.stderr)
                 sys.exit(1)
         print(status.model_dump_json())

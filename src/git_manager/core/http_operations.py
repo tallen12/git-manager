@@ -1,8 +1,12 @@
 """Operations through the REST API, as an httpx client."""
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 from git_manager.health import HealthStatus
+
+# Keeps a proxy's HTML error page from flooding the terminal.
+MAX_DETAIL_LENGTH = 200
 
 
 class ApiError(Exception):
@@ -18,6 +22,28 @@ class ApiUnreachableError(Exception):
     """The API could not be reached (connection refused, timeout, missing socket)."""
 
 
+class ApiResponseError(Exception):
+    """The API answered with a body that is not the expected schema (not Git Manager?)."""
+
+
+class _ErrorBody(BaseModel):
+    """FastAPI's error body; ``detail`` is a string or a list of validation errors."""
+
+    detail: str | list[object]
+
+
+def _error_detail(response: httpx.Response) -> str:
+    try:
+        detail = _ErrorBody.model_validate_json(response.content).detail
+    except ValidationError:
+        text = response.text.strip()
+    else:
+        text = detail if isinstance(detail, str) else str(detail)
+    if len(text) > MAX_DETAIL_LENGTH:
+        return f"{text[:MAX_DETAIL_LENGTH]}..."
+    return text
+
+
 class HttpOperations:
     """Implements ``Operations`` by calling a running daemon's REST API.
 
@@ -30,7 +56,11 @@ class HttpOperations:
     async def health(self) -> HealthStatus:
         """Report the daemon's health."""
         response = await self._get("/healthz")
-        return HealthStatus.model_validate_json(response.content)
+        try:
+            return HealthStatus.model_validate_json(response.content)
+        except ValidationError as error:
+            msg = f"unexpected response from {response.url}: {error.error_count()} error(s)"
+            raise ApiResponseError(msg) from error
 
     async def _get(self, path: str) -> httpx.Response:
         try:
@@ -38,5 +68,5 @@ class HttpOperations:
         except httpx.TransportError as error:
             raise ApiUnreachableError(str(error) or type(error).__name__) from error
         if response.is_error:
-            raise ApiError(status_code=response.status_code, detail=response.text)
+            raise ApiError(status_code=response.status_code, detail=_error_detail(response))
         return response
