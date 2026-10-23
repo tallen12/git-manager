@@ -22,7 +22,12 @@ def notification_topics(event: Event) -> frozenset[NotifyOn]:
             names = (value.value for value in (event.state, event.reason) if value is not None)
             return frozenset(_TOPICS[name] for name in names if name in _TOPICS)
         case (
-            EventKind.TRACKED | EventKind.UNTRACKED | EventKind.RUN_STARTED | EventKind.RUN_FINISHED
+            EventKind.TRACKED
+            | EventKind.UNTRACKED
+            | EventKind.RUN_STARTED
+            | EventKind.RUN_FINISHED
+            | EventKind.BASE_MOVED
+            | EventKind.HEAD_MOVED
         ):
             return frozenset[NotifyOn]()
         case _:

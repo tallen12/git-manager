@@ -51,7 +51,14 @@ def test_a_push_matches_pushed() -> None:
 
 @pytest.mark.parametrize(
     "kind",
-    [EventKind.TRACKED, EventKind.UNTRACKED, EventKind.RUN_STARTED, EventKind.RUN_FINISHED],
+    [
+        EventKind.TRACKED,
+        EventKind.UNTRACKED,
+        EventKind.RUN_STARTED,
+        EventKind.RUN_FINISHED,
+        EventKind.BASE_MOVED,
+        EventKind.HEAD_MOVED,
+    ],
 )
 def test_other_kinds_never_notify(kind: EventKind) -> None:
     assert notification_topics(event(kind, state=BranchState.NEEDS_HUMAN)) == frozenset()

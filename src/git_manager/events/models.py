@@ -16,6 +16,10 @@ class EventKind(StrEnum):
     RUN_STARTED = "run_started"
     RUN_FINISHED = "run_finished"
     PUSHED = "pushed"
+    # The poller saw the remote base or feature branch at a new hash (``data`` holds
+    # ``from`` and ``to``; ``to`` is null when the branch was deleted).
+    BASE_MOVED = "base_moved"
+    HEAD_MOVED = "head_moved"
 
 
 class EventDraft(BaseModel):

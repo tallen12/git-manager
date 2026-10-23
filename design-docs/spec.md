@@ -111,7 +111,9 @@ Detection and action run on separate clocks: the poller checks hashes every `pol
 | `waiting_quota` | The usage-limit reset time passes |
 | `paused` | `git-manager resume` |
 
-A base change while in `needs_human`, `needs_config`, `diverged_remote` or `paused` is recorded but does not start a run, so a stuck branch does not burn the Claude budget.
+A base change while in `needs_human`, `needs_config`, `diverged_remote` or `paused` is recorded but does not start a run, so a stuck branch does not burn the Claude budget. The same holds for `stack_partial_push`, `waiting_budget` and `waiting_quota`, which their own triggers leave. "Recorded" means a `base_moved` event; when a human later leaves the stop state, the next poll schedules the pending change by the cadence, counted from when the base moved. `tests_failed` starts a new run only on a base hash the poller has not seen since the failed run.
+
+**Poller details.** Each new remote hash of the base or the feature branch emits one `base_moved` or `head_moved` event (a deleted branch has `to: null`); during a run these are reported only, and the run decides whether to restart. A feature branch missing on the remote is never scheduled. `cron` expressions are evaluated in UTC. What the poller last saw lives in memory, so after a restart a pending base change counts as made at the first poll (the debounce window starts again).
 
 ## Stacked branches (gh stack)
 
