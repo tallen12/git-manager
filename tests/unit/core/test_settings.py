@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -7,64 +8,86 @@ from git_manager.core import HttpTarget, LocalTarget, Settings, SocketTarget
 
 
 @pytest.fixture
-def config_file(tmp_path: Path) -> Path:
-    path = tmp_path / "config.yaml"
+def config_file() -> Path:
+    # Tests run in an empty working directory (see the isolated_settings fixture).
+    path = Path("config.yaml")
     path.write_text("repo: {}\n", encoding="utf-8")
     return path
 
 
 @pytest.fixture
-def token_file(tmp_path: Path) -> Path:
-    path = tmp_path / "token"
-    path.write_text("file-token\n", encoding="utf-8")
-    return path
+def secrets_dir() -> Path:
+    return Path(os.environ["GM_SECRETS_DIR"])
 
 
-def test_config_selects_local_mode(config_file: Path) -> None:
+def write(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+
+
+def test_defaults_fill_the_http_and_mcp_sections(config_file: Path) -> None:
     settings = Settings.model_validate({"target": {"config": config_file}})
 
+    assert (settings.http.host, settings.http.port) == ("127.0.0.1", 8765)
+    assert (settings.mcp.name, settings.mcp.path) == ("git-manager", "/mcp")
+
+
+def test_reads_git_manager_yaml_in_the_working_directory(config_file: Path) -> None:
+    write(Path("git-manager.yaml"), "target:\n  config: config.yaml\nhttp:\n  port: 9000\n")
+
+    settings = Settings()
+
     assert settings.target == LocalTarget(config=config_file)
+    assert settings.http.port == 9000
 
 
-def test_nested_environment_selects_http_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GM_TARGET__URL", "http://127.0.0.1:8765")
-    monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
-
-    target = Settings().target
-
-    assert isinstance(target, HttpTarget)
-    assert target.url == "http://127.0.0.1:8765"
-    assert target.bearer_token().get_secret_value() == "env-token"
-
-
-def test_url_reads_and_strips_token_file(token_file: Path) -> None:
-    target = Settings.model_validate(
-        {"target": {"url": "http://gm.test", "token_file": token_file}}
-    ).target
-
-    assert isinstance(target, HttpTarget)
-    assert target.bearer_token().get_secret_value() == "file-token"
-
-
-def test_socket_selects_socket_mode(tmp_path: Path) -> None:
-    socket = tmp_path / "api.sock"
-
-    target = Settings.model_validate({"target": {"socket": socket}}).target
-
-    assert target == SocketTarget(socket=socket)
-
-
-def test_init_argument_overrides_environment_variable(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_settings_file_variable_picks_another_file(
+    config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GM_TARGET__SOCKET", str(tmp_path / "from-env.sock"))
+    other = tmp_path / "elsewhere.yaml"
+    write(other, f"target:\n  config: {config_file.resolve()}\nmcp:\n  name: other\n")
+    monkeypatch.setenv("GM_SETTINGS_FILE", str(other))
 
-    target = Settings.model_validate({"target": {"socket": tmp_path / "from-flag.sock"}}).target
-
-    assert target == SocketTarget(socket=tmp_path / "from-flag.sock")
+    assert Settings().mcp.name == "other"
 
 
-def test_init_argument_merges_with_environment_variable(
+def test_sources_override_in_order(
+    config_file: Path, secrets_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Highest wins: init arguments, environment, .env, secrets directory, YAML file.
+    write(Path("git-manager.yaml"), "target:\n  config: config.yaml\nhttp:\n  port: 1001\n")
+    write(secrets_dir / "gm_http__port", "1002\n")
+    assert Settings().http.port == 1002
+
+    write(Path(".env"), "GM_HTTP__PORT=1003\nUNRELATED=ignored\n")
+    assert Settings().http.port == 1003
+
+    monkeypatch.setenv("GM_HTTP__PORT", "1004")
+    assert Settings().http.port == 1004
+
+    assert Settings.model_validate({"http": {"port": 1005}}).http.port == 1005
+
+
+def test_nested_values_merge_across_sources(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(Path("git-manager.yaml"), "target:\n  config: config.yaml\nhttp:\n  host: 0.0.0.0\n")
+    monkeypatch.setenv("GM_HTTP__PORT", "9100")
+
+    settings = Settings()
+
+    assert (settings.http.host, settings.http.port) == ("0.0.0.0", 9100)
+
+
+def test_token_is_read_from_the_secrets_directory(secrets_dir: Path) -> None:
+    write(secrets_dir / "gm_target__token", "file-token\n")
+
+    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+
+    assert isinstance(target, HttpTarget)
+    assert target.token.get_secret_value() == "file-token"
+
+
+def test_token_from_environment_and_url_from_a_flag_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
@@ -72,46 +95,23 @@ def test_init_argument_merges_with_environment_variable(
     target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
 
     assert isinstance(target, HttpTarget)
-    assert target.bearer_token().get_secret_value() == "env-token"
+    assert target.token.get_secret_value() == "env-token"
 
 
-def test_token_never_appears_in_repr(token_file: Path) -> None:
-    settings = Settings.model_validate(
-        {"target": {"url": "http://gm.test", "token_file": token_file}}
-    )
+def test_local_and_socket_targets_ignore_a_token(
+    config_file: Path, secrets_dir: Path, tmp_path: Path
+) -> None:
+    write(secrets_dir / "gm_target__token", "file-token\n")
 
-    assert "file-token" not in repr(settings)
-    assert "file-token" not in repr(settings.target)
+    local = Settings.model_validate({"target": {"config": config_file}}).target
+    socket = Settings.model_validate({"target": {"socket": tmp_path / "api.sock"}}).target
 
-
-@pytest.mark.parametrize(
-    ("target", "message"),
-    [
-        (None, "no target"),
-        ({"token_file": "token"}, "choose one target"),
-        ({"url": "http://gm.test"}, "--url needs a token"),
-        ({"url": "not a url", "token": "t"}, "invalid --url"),
-        ({"socket": "api.sock", "url": "http://gm.test"}, "choose one target"),
-        ({"socket": "api.sock", "token": "t"}, "Extra inputs are not permitted"),
-    ],
-    ids=[
-        "nothing",
-        "token-without-url",
-        "url-without-token",
-        "bad-url",
-        "socket-and-url",
-        "socket-with-token",
-    ],
-)
-def test_invalid_targets_fail_validation(target: dict[str, str] | None, message: str) -> None:
-    data = {} if target is None else {"target": target}
-
-    with pytest.raises(ValidationError, match=message):
-        Settings.model_validate(data)
+    assert local == LocalTarget(config=config_file)
+    assert socket == SocketTarget(socket=tmp_path / "api.sock")
 
 
-def test_config_flag_and_url_variable_together_fail_validation(
-    monkeypatch: pytest.MonkeyPatch, config_file: Path
+def test_flag_for_one_target_and_variable_for_another_fail(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GM_TARGET__URL", "http://gm.test")
 
@@ -119,34 +119,17 @@ def test_config_flag_and_url_variable_together_fail_validation(
         Settings.model_validate({"target": {"config": config_file}})
 
 
-def test_token_and_token_file_together_fail_validation(
-    monkeypatch: pytest.MonkeyPatch, token_file: Path
-) -> None:
-    monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
+@pytest.mark.parametrize(
+    ("yaml", "message"),
+    [
+        ("http:\n  port: 1\n", "no target"),
+        ("target:\n  config: config.yaml\nhttp:\n  prot: 1\n", "Extra inputs"),
+        ("target:\n  config: config.yaml\nsurprise: 1\n", "Extra inputs"),
+    ],
+    ids=["no-target", "typo-in-section", "unknown-section"],
+)
+def test_invalid_settings_files_fail_validation(config_file: Path, yaml: str, message: str) -> None:
+    write(Path("git-manager.yaml"), yaml)
 
-    with pytest.raises(ValidationError, match="only one of GM_TARGET__TOKEN and --token-file"):
-        Settings.model_validate({"target": {"url": "http://gm.test", "token_file": token_file}})
-
-
-def test_empty_token_file_fails_validation(tmp_path: Path) -> None:
-    empty = tmp_path / "token"
-    empty.write_text("\n", encoding="utf-8")
-
-    with pytest.raises(ValidationError, match="is empty"):
-        Settings.model_validate({"target": {"url": "http://gm.test", "token_file": empty}})
-
-
-def test_missing_config_file_fails_validation(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError):
-        Settings.model_validate({"target": {"config": tmp_path / "missing.yaml"}})
-
-
-@pytest.mark.parametrize("variant", ["local", "http", "socket"])
-def test_built_targets_are_accepted_as_is(variant: str, config_file: Path, tmp_path: Path) -> None:
-    target = {
-        "local": LocalTarget(config=config_file),
-        "http": HttpTarget.model_validate({"url": "http://gm.test", "token": "t"}),
-        "socket": SocketTarget(socket=tmp_path / "api.sock"),
-    }[variant]
-
-    assert Settings(target=target).target == target
+    with pytest.raises(ValidationError, match=message):
+        Settings()

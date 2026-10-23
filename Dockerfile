@@ -18,7 +18,8 @@ COPY src ./src
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 # The daemon runs in local mode against the mounted config (see design-docs/spec.md).
-ENV GM_TARGET__CONFIG=/etc/git-manager/config.yaml
+ENV GM_TARGET__CONFIG=/etc/git-manager/config.yaml \
+    GM_HTTP__HOST=0.0.0.0
 USER gm
 ENTRYPOINT ["git-manager"]
-CMD ["serve", "--host", "0.0.0.0"]
+CMD ["serve"]

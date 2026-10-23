@@ -4,7 +4,8 @@ from git_manager.core.connect import Connector, build_connector
 from git_manager.core.http_operations import ApiError, ApiUnreachableError, HttpOperations
 from git_manager.core.protocols import Operations
 from git_manager.core.service import Service
-from git_manager.core.settings import HttpTarget, LocalTarget, Settings, SocketTarget, Target
+from git_manager.core.settings import Settings
+from git_manager.core.targets import HttpTarget, LocalTarget, SocketTarget, Target
 
 __all__ = [
     "ApiError",

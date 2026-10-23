@@ -119,8 +119,9 @@ def test_server_commands_need_a_target_too(
         (["doctor", "--url", "not a url"], "error: invalid --url"),
         (["doctor", "--bogus"], "error: Unknown option: --bogus"),
         (["doctor", "--config", "missing.yaml"], "error: --config missing.yaml: Path does not"),
+        (["--socket", "api.sock", "doctor", "--http.port", "x"], "error: http.port: Input should"),
     ],
-    ids=["invalid-flag-value", "unknown-flag", "missing-config"],
+    ids=["invalid-flag-value", "unknown-flag", "missing-config", "invalid-section-flag"],
 )
 def test_invalid_flags_print_one_line_errors(
     service: Operations,
@@ -138,3 +139,19 @@ def test_invalid_flags_print_one_line_errors(
     assert status == 2
     assert connector.targets == []
     assert capsys.readouterr().err.startswith(message)
+
+
+def test_doctor_reads_target_from_settings_file(
+    service: Operations, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Path("git-manager.yaml").write_text(
+        f"target:\n  socket: {tmp_path / 'api.sock'}\nhttp:\n  prot: 1\n", encoding="utf-8"
+    )
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, ["doctor"])
+
+    assert status == 2
+    assert connector.targets == []
+    assert capsys.readouterr().err == "error: http.prot: Extra inputs are not permitted\n"

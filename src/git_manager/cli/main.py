@@ -7,6 +7,7 @@ from typing import Annotated, NoReturn
 
 from cyclopts import App, CycloptsError, Parameter
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
 from git_manager.core import (
     ApiError,
@@ -23,14 +24,22 @@ from git_manager.metadata import package_version
 _USAGE_ERROR = 2
 
 
+def _describe(detail: ErrorDetails) -> str:
+    message = detail["msg"].removeprefix("Value error, ")
+    loc = detail["loc"]
+    # Our own validators and the target discriminator already name the option.
+    if detail["type"] in {"value_error", "target"} or not loc:
+        return message
+    if detail["type"].startswith("path_") and isinstance(loc[-1], str):
+        return f"--{loc[-1].replace('_', '-')} {detail['input']}: {message}"
+    # Drop the union tag pydantic adds after ``target`` (``target.http.url`` is ``--url``).
+    parts = [part for index, part in enumerate(loc) if not (index == 1 and loc[0] == "target")]
+    return f"{'.'.join(str(part) for part in parts)}: {message}"
+
+
 def _usage_error(error: ValidationError) -> NoReturn:
     for detail in error.errors():
-        message = detail["msg"].removeprefix("Value error, ")
-        # Path checks do not name the option or path; the other messages already do.
-        option = detail["loc"][-1] if detail["loc"] else None
-        if detail["type"].startswith("path_") and isinstance(option, str):
-            message = f"--{option.replace('_', '-')} {detail['input']}: {message}"
-        print(f"error: {message}", file=sys.stderr)
+        print(f"error: {_describe(detail)}", file=sys.stderr)
     sys.exit(_USAGE_ERROR)
 
 
@@ -65,17 +74,12 @@ def build_app(*, connect: Connector, version: str) -> App:
         print(status.model_dump_json())
 
     @app.command
-    async def serve(
-        *,
-        settings: Annotated[Settings, Parameter(parse=False)],
-        host: str = "127.0.0.1",
-        port: int = 8765,
-    ) -> None:
-        """Start the daemon's REST server (MCP is mounted at /mcp in a later milestone)."""
+    async def serve(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
+        """Start the daemon's REST server on --http.host and --http.port."""
         from git_manager.web.app import serve as serve_rest
 
         await serve_rest(
-            connect=connect, target=settings.target, version=version, host=host, port=port
+            connect=connect, target=settings.target, http=settings.http, version=version
         )
 
     mcp = App(name="mcp", help="MCP interface.")
@@ -86,7 +90,7 @@ def build_app(*, connect: Connector, version: str) -> App:
         """Serve MCP over stdio, in-process (local mode) or bridged to a daemon (API mode)."""
         from git_manager.mcp.server import serve_stdio
 
-        await serve_stdio(connect=connect, target=settings.target)
+        await serve_stdio(connect=connect, target=settings.target, mcp=settings.mcp)
 
     @app.meta.default
     async def launch(

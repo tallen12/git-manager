@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from git_manager.core import Connector, Operations, Target
 from git_manager.health import HealthStatus
+from git_manager.web.settings import HttpSettings
 
 
 def create_app(*, operations: Operations, version: str) -> FastAPI:
@@ -18,10 +19,10 @@ def create_app(*, operations: Operations, version: str) -> FastAPI:
     return app
 
 
-async def serve(*, connect: Connector, target: Target, version: str, host: str, port: int) -> None:
+async def serve(*, connect: Connector, target: Target, http: HttpSettings, version: str) -> None:
     """Serve REST for the operations ``target`` selects until the server stops."""
     async with connect(target) as operations:
         config = uvicorn.Config(
-            create_app(operations=operations, version=version), host=host, port=port
+            create_app(operations=operations, version=version), host=http.host, port=http.port
         )
         await uvicorn.Server(config).serve()

@@ -33,10 +33,18 @@ def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Hide the developer's ``GM_*`` variables so targets come only from each test."""
+def isolated_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Hide every settings source the developer may have, so settings come only from tests.
+
+    Clears ``GM_*`` variables and runs each test in an empty directory (no
+    ``git-manager.yaml`` or ``.env``) with an empty secrets directory.
+    """
     for name in [name for name in os.environ if name.startswith("GM_")]:
         monkeypatch.delenv(name)
+    monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+    monkeypatch.setenv("GM_SECRETS_DIR", str(tmp_path_factory.mktemp("secrets")))
 
 
 @pytest.fixture

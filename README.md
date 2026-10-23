@@ -23,18 +23,35 @@ just diagrams  # re-render design-docs/images/*.dot (needs Graphviz)
 
 The CLI is `git-manager`; once installed on `PATH`, git also runs it as `git manager`.
 Every command runs either in-process from a config file (local mode) or through a running
-daemon's REST API (API mode). Pick one target with flags, which work on every command,
-or the matching `GM_TARGET__*` variables:
+daemon's REST API (API mode). Pick one target with flags, which work on every command:
 
 ```sh
 just cli doctor --config config.yaml                               # local mode
 GM_TARGET__TOKEN=... just cli doctor --url http://127.0.0.1:8765   # API mode over HTTP
 just cli doctor --socket /run/git-manager/api.sock                 # API mode over the socket
-GM_TARGET__CONFIG=config.yaml just cli doctor                      # target from the environment
 ```
 
 `serve` and `mcp stdio` take the same target, so `just mcp --url ...` bridges MCP over
-stdio to a running daemon. The image sets `GM_TARGET__CONFIG=/etc/git-manager/config.yaml`;
+stdio to a running daemon.
+
+## Settings
+
+Settings have three sections: `target` (where operations run), `http` (where `serve`
+listens) and `mcp` (the MCP server). Each value can come from, highest first:
+
+1. Flags: `--config`, `--url`, `--socket`, `--http.port`, `--mcp.name`, ...
+2. `GM_*` environment variables, nested with `__`: `GM_TARGET__URL`, `GM_HTTP__PORT`.
+3. A `.env` file in the current directory, with the same variable names.
+4. Files in the secrets directory (`/run/secrets`, or `GM_SECRETS_DIR`), one per value,
+   named like the variable in lower case: `gm_target__token` holds the API token.
+5. `git-manager.yaml` in the current directory (or the file `GM_SETTINGS_FILE` names).
+
+Nested values merge across sources. The API token has no flag, so it never lands in shell
+history. Copy [`git-manager.example.yaml`](git-manager.example.yaml) to start; relative
+paths in it resolve against the current directory. `git-manager.yaml` and `.env` are
+ignored by git, since they may hold a token.
+
+The image sets `GM_TARGET__CONFIG=/etc/git-manager/config.yaml` and `GM_HTTP__HOST=0.0.0.0`;
 mount a config file there.
 
 `.claude/skills` is a symlink to `.agents/skills`. Clone with `core.symlinks=true` (the

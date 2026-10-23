@@ -415,26 +415,33 @@ One service layer (`git_manager.core.Service`) backs all three interfaces, so RE
 - **MCP (FastMCP):** mounted on the same server at `/mcp` (streamable HTTP). `git-manager mcp stdio --url ...` provides a stdio bridge for MCP clients that only speak stdio. Its token has `read` and `operate` but never `approve`, so retarget, approve and sensitive config tools are not exposed at all. Tools are hand-written (not auto-generated from OpenAPI) for clear descriptions.
 - **CLI (cyclopts), command `git-manager`:** runs every operation in the table below, either in-process (local mode) or through the REST API (API mode). Both modes take the same arguments and print the same output, because the CLI depends only on the `Operations` protocol. `git-manager serve` starts the daemon; `git-manager config validate` works offline in either mode.
 
-**Modes.** Where operations run is chosen per invocation by the settings described below. The same settings configure every entry point: CLI commands, `serve` and `mcp stdio`, so REST and MCP can also be started on their own (`git_manager.web.app.serve`, `git_manager.mcp.server.serve_stdio`) from the same `GM_TARGET__*` variables.
+**Modes.** Where operations run is chosen per invocation by the settings described below. The same settings configure every entry point: CLI commands, `serve` and `mcp stdio`, so REST and MCP can also be started on their own (`git_manager.web.app.serve`, `git_manager.mcp.server.serve_stdio`) from the same sources.
 
 | Mode | Selected by | Runs operations | Scopes |
 | --- | --- | --- | --- |
 | Local | `--config PATH` / `GM_TARGET__CONFIG` | In-process through `Service`, against the config file and its data directory | All, like the config file's owner |
-| API over HTTP | `--url URL` / `GM_TARGET__URL`, plus `--token-file` / `GM_TARGET__TOKEN_FILE` or `GM_TARGET__TOKEN` (environment only) | Through `HttpOperations` against a running daemon | The token's scopes |
+| API over HTTP | `--url URL` / `GM_TARGET__URL`, plus a token from `GM_TARGET__TOKEN` or the `gm_target__token` secret file (never a flag) | Through `HttpOperations` against a running daemon | The token's scopes |
 | API over the socket | `--socket PATH` / `GM_TARGET__SOCKET` (inside the container, as `docker exec -u gm`) | Through `HttpOperations` over the Unix socket `/run/git-manager/api.sock` | All; limited to the `gm-admin` group |
 
-- **Settings (pydantic-settings, in `git_manager.core`).** The target is a field of one `Settings` model (`BaseSettings`, `env_prefix="GM_"`, `env_nested_delimiter="__"`), so flags, environment variables, types and validation live in one place. The CLI takes `Settings` as a flattened cyclopts parameter on its meta app, so `--config`, `--url`, `--token-file` and `--socket` apply to every command, before or after the command name. Flags are passed in as init arguments, which pydantic-settings merges over the `GM_TARGET__*` variables. The token is a `SecretStr`, never printed or logged, and has no flag. `serve` and `config validate` read the same target, so one `GM_TARGET__CONFIG` serves every command; the image sets it to `/etc/git-manager/config.yaml`. Server settings use their own nested names (for example `GM_SERVER__SOCKET`), so they never collide with the target.
-- **The target is a sum type.** `target` is `LocalTarget | HttpTarget | SocketTarget`, discriminated by the one option that identifies each variant (`config`, `url` or `socket`), so there is no `kind` option. Pydantic rejects none or several of them, a URL without a token, both `token` and `token_file`, and options that belong to another variant (`extra="forbid"`), so a command never runs against the wrong target. With none of them, the error says how to configure one. The composition root opens `Service` or `HttpOperations` with a `match` on the target.
+- **Settings (pydantic-settings, in `git_manager.core.settings`).** One `Settings` model (`BaseSettings`, `env_prefix="GM_"`, `env_nested_delimiter="__"`) composes a section per domain: `target` from `core.targets`, `http` from `web.settings` and `mcp` from `mcp.settings`. The domain sections are plain Pydantic models (`extra="forbid"`, so typos fail); only `Settings` reads sources. Sources, highest first:
+  1. Init arguments: the CLI flags.
+  2. `GM_*` environment variables, nested with `__` (`GM_TARGET__URL`, `GM_HTTP__PORT`).
+  3. A `.env` file in the current directory, with the same names; other variables in it are ignored.
+  4. The secrets directory (`/run/secrets`, or `GM_SECRETS_DIR`), one file per value named like the variable in lower case (`gm_target__token`), as Docker and compose mount secrets.
+  5. The settings file: `git-manager.yaml` in the current directory, or the file `GM_SETTINGS_FILE` names. It is separate from the repo config that `--config` selects.
+
+  Nested values merge across sources, so a file can set `http.host` while a flag sets `--http.port`.
+- **Flags on every command.** The CLI takes `Settings` as a flattened cyclopts parameter on its meta app, so `--config`, `--url` and `--socket` (the target's fields) and the dotted section flags (`--http.host`, `--http.port`, `--mcp.name`, `--mcp.path`) apply to every command, before or after the command name. The token is a `SecretStr`, never printed or logged, and has no flag. `serve` and `config validate` read the same target, so one `GM_TARGET__CONFIG` serves every command; the image sets it to `/etc/git-manager/config.yaml` and `GM_HTTP__HOST` to `0.0.0.0`.
+- **The target is a sum type.** `target` is `LocalTarget | HttpTarget | SocketTarget`, discriminated by the one option that identifies each variant (`config`, `url` or `socket`), so there is no `kind` option. Pydantic rejects none or several of them, a URL without a token, and options that belong to another variant, so a command never runs against the wrong target. A token is dropped unless the target is a URL, so one secrets directory serves every mode. With no target, the error says how to configure one. The composition root opens `Service` or `HttpOperations` with a `match` on the target.
 
 ```python
-class LocalTarget(BaseModel):            # extra="forbid" on every variant
+# core/targets.py: every variant is frozen with extra="forbid"
+class LocalTarget(BaseModel):
     config: FilePath                     # --config / GM_TARGET__CONFIG
 
 class HttpTarget(BaseModel):
     url: HttpUrlStr                      # --url / GM_TARGET__URL
-    token: SecretStr | None = None       # GM_TARGET__TOKEN (no flag, to keep it out of shell history)
-    token_file: FilePath | None = None   # --token-file / GM_TARGET__TOKEN_FILE
-    def bearer_token(self) -> SecretStr: ...  # exactly one of token and token_file
+    token: SecretStr                     # GM_TARGET__TOKEN or secrets/gm_target__token; no flag
 
 class SocketTarget(BaseModel):
     socket: Path                         # --socket / GM_TARGET__SOCKET
@@ -445,12 +452,24 @@ Target = Annotated[
     Discriminator(tag_from_the_option_set),
 ]
 
+# web/settings.py and mcp/settings.py
+class HttpSettings(BaseModel):
+    host: str = "127.0.0.1"              # --http.host / GM_HTTP__HOST
+    port: int = 8765                     # --http.port / GM_HTTP__PORT
+
+class McpSettings(BaseModel):
+    name: str = "git-manager"            # --mcp.name / GM_MCP__NAME
+    path: str = "/mcp"                   # --mcp.path / GM_MCP__PATH; mount on REST (M4)
+
+# core/settings.py
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="GM_", env_nested_delimiter="__")
+    model_config = SettingsConfigDict(env_prefix="GM_", env_nested_delimiter="__", ...)
     target: Target
+    http: HttpSettings = HttpSettings()
+    mcp: McpSettings = McpSettings()
 ```
 
-`HttpUrlStr` is a `str` checked as an `HttpUrl`: cyclopts cannot inspect pydantic's URL class.
+`HttpUrlStr` is a `str` checked as an `HttpUrl`: cyclopts cannot inspect pydantic's URL class. The server's socket and `tokens_file` join `HttpSettings` with authentication in M2.
 
 - **One writer at a time.** The data directory holds an exclusive lock while a daemon or a local-mode command uses it. A local-mode command that finds the lock held exits with an error naming the API mode to use instead, so the CLI never becomes a second writer next to a running daemon.
 - **Local mode runs to completion.** There is no poller: `sync` runs the rebase, verification and any Claude resolution in the foreground and prints the result; scheduled cadence needs `serve`. Approvals, failures and sessions are stored in the same SQLite state, so a run started locally can be approved later in either mode.
@@ -492,12 +511,8 @@ Configuration is a hand-editable YAML file whose every field has a default, so a
 
 ```yaml
 # /etc/git-manager/config.yaml  (one repo per container)
-server:
-  host: 0.0.0.0            # inside the container; compose publishes it on host 127.0.0.1 only
-  port: 8765
-  socket: /run/git-manager/api.sock   # group gm-admin
-  tokens_file: /run/secrets/gm_tokens   # token -> scopes (read, operate, approve)
-
+# Where the server listens is a setting, not repo config: see Interfaces (http section of
+# git-manager.yaml or GM_HTTP__*). The planned server socket and tokens_file move there in M2.
 repo:
   url: git@github.com:prxengage/trialport-api.git
   credential: /run/secrets/deploy_key

@@ -9,3 +9,4 @@ secrets
 .worktrees
 .coverage
 coverage.xml
+git-manager.yaml
