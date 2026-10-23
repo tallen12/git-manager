@@ -23,6 +23,9 @@ just mcp       # MCP over stdio
 
 The CLI is `git-manager`; once installed on `PATH`, git also runs it as `git manager`.
 
+`.claude/skills` is a symlink to `.agents/skills`. Clone with `core.symlinks=true` (the
+default on macOS and Linux) so Claude Code can load the shared skills.
+
 ## Status
 
 Project skeleton only: health endpoints on the CLI, REST and MCP. Milestones M1 to M5 in
