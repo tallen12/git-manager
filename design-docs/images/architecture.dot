@@ -1,0 +1,108 @@
+// Git Manager architecture. Render with `just diagrams`.
+//
+// The service core is an HTML table whose empty cells act as ports, so each
+// arrow meets the core straight above the box it comes from or goes to. Cell
+// widths in points follow the worker boxes: 1.8in (130pt) wide, 0.3in (22pt)
+// apart.
+digraph architecture {
+  graph [
+    fontname="Helvetica", fontsize=15, fontcolor="#111111",
+    label=<<B>Three interfaces share one service core</B>>,
+    labelloc=t, labeljust=l,
+    bgcolor="white", pad="0.3,0.25", nodesep=0.3, ranksep=0.5,
+    splines=polyline, newrank=true
+  ];
+  node [
+    shape=box, style="rounded,filled", fillcolor="white", color="#C8C6BE",
+    penwidth=1.3, fontname="Helvetica", fontsize=13, fontcolor="#1A1A1A",
+    width=1.8, height=0.55
+  ];
+  edge [
+    color="#BDBBB2", penwidth=1.3, arrowsize=0.6,
+    fontname="Helvetica", fontsize=11, fontcolor="#555555"
+  ];
+
+  subgraph cluster_host {
+    label=<<B>Host machine</B>>; labeljust=l; fontsize=13;
+    style="dashed,rounded"; color="#C8C6BE"; margin=14;
+    cli_api [label=<git-manager CLI · watch<BR/><FONT POINT-SIZE="11" COLOR="#666666">API mode (--url)</FONT>>, width=1.95];
+    dexec   [label=<docker exec git-manager …<BR/><FONT POINT-SIZE="11" COLOR="#666666">API mode (--socket)<BR/>runs inside the container</FONT>>, width=2.15];
+    agent   [label="LLM agent (MCP client)", width=1.95];
+  }
+
+  subgraph cluster_local {
+    label=<<B>Local mode · no daemon</B>>; labeljust=l; fontsize=13;
+    style="dashed,rounded"; color="#C8C6BE"; margin=14;
+    cli_local [label=<git-manager CLI · local mode<BR/><FONT POINT-SIZE="11" COLOR="#666666">--config, same core in-process<BR/>data-directory lock: one writer</FONT>>, width=2.2];
+  }
+
+  subgraph cluster_container {
+    label=<<B>Git Manager container</B>>; labeljust=l; fontsize=13;
+    style="rounded"; color="#C8C6BE"; margin=14;
+
+    rest [label="REST API · FastAPI", width=2.1];
+    mcp  [label="MCP · FastMCP"];
+
+    core [
+      fillcolor="#E6EFFA", color="#2F6FD0", penwidth=2, margin=0, width=0, height=0,
+      label=<<TABLE BORDER="0" CELLSPACING="0" CELLPADDING="0">
+        <TR><TD><TABLE BORDER="0" CELLSPACING="0" CELLPADDING="0"><TR>
+          <TD PORT="rest" WIDTH="282" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD WIDTH="22" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD PORT="mcp" WIDTH="130" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD WIDTH="22" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD PORT="local" WIDTH="282" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+        </TR></TABLE></TD></TR>
+        <TR><TD CELLPADDING="10"><B>Service core</B><BR/>One Operations protocol · Pydantic models · per-branch locks<BR/>State in SQLite on /data · clones and run worktrees on /data · secrets read-only</TD></TR>
+        <TR><TD><TABLE BORDER="0" CELLSPACING="0" CELLPADDING="0"><TR>
+          <TD PORT="poller" WIDTH="130" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD WIDTH="22" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD PORT="gitops" WIDTH="130" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD WIDTH="22" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD PORT="resolver" WIDTH="130" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD WIDTH="22" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD PORT="verifier" WIDTH="130" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD WIDTH="22" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+          <TD PORT="events" WIDTH="130" HEIGHT="1" FIXEDSIZE="TRUE"></TD>
+        </TR></TABLE></TD></TR>
+      </TABLE>>
+    ];
+
+    poller   [label=<<B>Poller</B><BR/><FONT COLOR="#555555">compares hashes<BR/>drives cadence</FONT>>, height=0.85];
+    gitops   [label=<<B>Git ops</B><BR/><FONT COLOR="#555555">rebase --onto<BR/>push with lease</FONT>>, height=0.85];
+    resolver [label=<<B>Resolver</B><BR/><FONT COLOR="#555555">Claude CLI<BR/>repo-confined</FONT>>, height=0.85];
+    verifier [label=<<B>Verifier</B><BR/><FONT COLOR="#555555">setup + tests<BR/>+ optional lint</FONT>>, height=0.85];
+    events   [label=<<B>Event bus</B><BR/><FONT COLOR="#555555">SSE + webhooks<BR/>audit log</FONT>>, height=0.85];
+  }
+
+  origin    [label="Git origin", width=3.2];
+  anthropic [label="Anthropic API"];
+  dind      [label="dind sidecar"];
+  webhooks  [label="Webhooks"];
+
+  { rank=same; cli_api; dexec; agent; cli_local; }
+  { rank=same; rest; mcp; }
+  { rank=same; poller; gitops; resolver; verifier; events; }
+  { rank=same; origin; anthropic; dind; webhooks; }
+
+  cli_api -> rest [label="  HTTP + SSE"];
+  dexec -> rest [label="  Unix socket"];
+  agent -> mcp [label="  streamable HTTP"];
+
+  rest -> core:rest:n;
+  mcp -> core:mcp:n;
+  // Local mode runs the same core in-process; it never goes through REST or MCP.
+  cli_local -> core:local:n [label="  in-process", style=dashed];
+
+  core:poller:s -> poller;
+  core:gitops:s -> gitops;
+  core:resolver:s -> resolver;
+  core:verifier:s -> verifier;
+  core:events:s -> events;
+
+  poller -> origin [label="  ls-remote"];
+  gitops -> origin [label="  fetch, push"];
+  resolver -> anthropic [label="  claude -p"];
+  verifier -> dind [label="  mTLS"];
+  events -> webhooks [label="  POST events"];
+}

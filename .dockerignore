@@ -1,0 +1,12 @@
+.git
+.venv
+.env
+secrets
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.claude
+.worktrees
+.coverage
+coverage.xml
+git-manager.yaml

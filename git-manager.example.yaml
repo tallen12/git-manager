@@ -1,0 +1,22 @@
+# Git Manager settings. Copy to git-manager.yaml in the directory you run git-manager
+# from, or point GM_SETTINGS_FILE at it. Flags, GM_* variables, .env and the secrets
+# directory override these values.
+
+# Where operations run: set exactly one of config, url or socket.
+target:
+  config: config.yaml            # local mode: run in-process against this config file
+  # url: http://127.0.0.1:8765   # API mode over HTTP; the token comes from
+  #                              # GM_TARGET__TOKEN or /run/secrets/gm_target__token
+  # socket: /run/git-manager/api.sock   # API mode over the daemon's Unix socket
+  # plain_http: loopback        # http:// only to loopback hosts; `allowed` sends the
+  #                              # token unencrypted to any host
+
+# Where `git-manager serve` listens.
+http:
+  host: 127.0.0.1
+  port: 8765
+
+# The MCP server.
+mcp:
+  name: git-manager
+  path: /mcp                     # mount path on the REST server (M4)
