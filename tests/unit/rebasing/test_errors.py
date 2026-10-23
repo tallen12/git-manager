@@ -1,4 +1,4 @@
-from git_manager.rebasing import GitError
+from git_manager.rebasing import GitError, GitOutputError
 
 
 def test_git_error_names_the_command_and_its_stderr() -> None:
@@ -12,3 +12,11 @@ def test_git_error_reports_a_timeout() -> None:
     error = GitError(argv=["git", "fetch"], exit_code=None, stderr="")
 
     assert "timed out" in str(error)
+
+
+def test_git_output_error_is_a_git_error_carrying_the_output() -> None:
+    error = GitOutputError(argv=["git", "merge-base"], output="junk", problem="expected a hash")
+
+    assert isinstance(error, GitError)
+    assert error.output == "junk"
+    assert str(error) == "git merge-base exited 0: expected a hash: 'junk'"

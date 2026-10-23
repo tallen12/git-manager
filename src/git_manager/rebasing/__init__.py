@@ -1,6 +1,6 @@
 """Rebasing: worktrees, rebase --onto and pushes with a lease."""
 
-from git_manager.rebasing.errors import GitError
+from git_manager.rebasing.errors import GitError, GitOutputError
 from git_manager.rebasing.models import (
     LeaseRejected,
     Pushed,
@@ -16,6 +16,7 @@ from git_manager.rebasing.protocols import Git, RunOperations
 __all__ = [
     "Git",
     "GitError",
+    "GitOutputError",
     "LeaseRejected",
     "PushOutcome",
     "Pushed",
