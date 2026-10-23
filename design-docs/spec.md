@@ -479,7 +479,7 @@ class ClientSettings(BaseSettings):
 | Claude usage and budget | `GET /usage`; `POST /budget/reset` (`approve` scope) | `get_usage` | `git-manager usage`, `git-manager budget reset` |
 | Config | `GET /config`; `PATCH /config` (sensitive keys need `approve`) | `get_config` (read only) | `git-manager config show`, `git-manager config set` |
 | Events | `GET /events` (SSE) | `wait_for_event` | `git-manager watch [--notify]` |
-| Health | `GET /healthz` | — | `git-manager doctor` |
+| Health | `GET /healthz` | `health` | `git-manager doctor` |
 
 Every CLI command in this table works in both CLI modes, and every operation behind it has a REST endpoint; a new operation is added to `Operations`, `Service`, REST and `HttpOperations` together. Only process-level commands have no endpoint: `serve`, `mcp stdio` and `config validate`.
 

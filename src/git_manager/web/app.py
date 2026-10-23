@@ -2,15 +2,16 @@
 
 from fastapi import FastAPI
 
-from git_manager.health import HealthReporter, HealthStatus
+from git_manager.core import Operations
+from git_manager.health import HealthStatus
 
 
-def create_app(*, reporter: HealthReporter, version: str) -> FastAPI:
-    """Build the REST application around injected capabilities."""
+def create_app(*, operations: Operations, version: str) -> FastAPI:
+    """Build the REST application; every operation gets an endpoint."""
     app = FastAPI(title="Git Manager", version=version)
 
     @app.get("/healthz")
-    def healthz() -> HealthStatus:
-        return reporter.status()
+    async def healthz() -> HealthStatus:
+        return await operations.health()
 
     return app

@@ -19,4 +19,4 @@ RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 USER gm
 ENTRYPOINT ["git-manager"]
-CMD ["web", "--host", "0.0.0.0"]
+CMD ["serve", "--host", "0.0.0.0"]

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from git_manager.core import Operations, Service
 from git_manager.health import HealthReporter, StaticHealthReporter
 
 TEST_VERSION = "0.0.0-test"
@@ -20,9 +21,21 @@ def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
+@pytest.fixture(autouse=True)
+def isolated_client_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hide the developer's ``GM_*`` variables so CLI targets come only from each test."""
+    for name in ("GM_CONFIG", "GM_URL", "GM_TOKEN", "GM_TOKEN_FILE", "GM_SOCKET"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def reporter() -> HealthReporter:
     return StaticHealthReporter(version=TEST_VERSION)
+
+
+@pytest.fixture
+def service(reporter: HealthReporter) -> Operations:
+    return Service(reporter=reporter)
 
 
 @pytest.fixture

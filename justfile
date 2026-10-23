@@ -34,9 +34,9 @@ check: lint typecheck test
 cli *args:
     uv run git-manager {{args}}
 
-# Start the REST server.
-web:
-    uv run git-manager web
+# Start the daemon's REST server.
+serve:
+    uv run git-manager serve
 
 # Start the MCP stdio server.
 mcp:
