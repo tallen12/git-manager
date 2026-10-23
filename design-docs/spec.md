@@ -14,7 +14,7 @@ Keeping branches rebased is the first operation. The name is deliberately broade
 - Rebase on a configurable cadence; never push a branch whose tests fail.
 - Resolve conflicts with Claude CLI, guided by the repo's `AGENTS.md`, with tools confined to the repo.
 - Gate any AI-resolved rebase behind explicit human approval, with notifications reaching the host.
-- Expose one core over three interfaces: REST (FastAPI), MCP (FastMCP), and CLI (cyclopts, local and remote).
+- Expose one core over three interfaces: REST (FastAPI), MCP (FastMCP), and CLI (cyclopts). The CLI runs every operation either in-process from a config file or through the REST API, which mirrors all of them.
 
 **Non-goals (v1)**
 
@@ -69,7 +69,7 @@ A single long-running container hosts the daemon; every interface calls the same
 
 ![Architecture: three interfaces share one service core inside one container](images/architecture.png)
 
-The host only talks to the container through the API, the MCP endpoint or `docker exec`; the container never mounts the developer's working copy. Each sync runs in a throwaway `git worktree` under `/data`, so a crashed or rejected run leaves the managed clone untouched.
+The host only talks to the container through the API, the MCP endpoint or `docker exec`; the container never mounts the developer's working copy. The CLI can also run the same service core in-process from a config file, without a daemon (local mode; see Interfaces). Each sync runs in a throwaway `git worktree` under `/data`, so a crashed or rejected run leaves the managed clone untouched.
 
 A `docker:dind` sidecar in the same compose project runs any containers the test suite needs. Only the gm-tests user can read its client certificates; see Verification for the setup.
 
@@ -408,12 +408,27 @@ All of these need only the `operate` scope, so MCP can use them. None of them pu
 
 ## Interfaces
 
-One service layer (`git_manager.core.Service`) backs all three interfaces, so REST, MCP and CLI cannot drift: each is a thin adapter over the same Pydantic models.
+One service layer (`git_manager.core.Service`) backs all three interfaces, so REST, MCP and CLI cannot drift: each is a thin adapter over the same Pydantic models. The service's public operations are defined once as a protocol (`git_manager.core.Operations`). `Service` implements it in-process; `HttpOperations` implements it as an httpx client of the REST API. REST mirrors every operation, so either implementation can back the CLI, and one contract test suite runs against both.
 
 - **REST (FastAPI):** `/api/v1/...`, OpenAPI at `/docs`, SSE at `/api/v1/events`. Every request needs a bearer token. Scopes: `read`; `operate` (sync, pause, resume, track, non-sensitive config); `approve` (approvals, retargets, test-command confirmation, budget reset, sensitive config).
 - **Sensitive config** needs `approve`: anything under `verify`, `claude`, `stack.mode` and `budget`, plus `approval_policy`, `auto_push_clean`, `notify.webhooks` and `signing_key`. That way an agent cannot set the test command, widen Claude's tools or skip approval through config.
 - **MCP (FastMCP):** mounted on the same server at `/mcp` (streamable HTTP). `git-manager mcp stdio --url ...` provides a stdio bridge for MCP clients that only speak stdio. Its token has `read` and `operate` but never `approve`, so retarget, approve and sensitive config tools are not exposed at all. Tools are hand-written (not auto-generated from OpenAPI) for clear descriptions.
-- **CLI (cyclopts), command `git-manager`:** always a client of the daemon, never a second writer to the database. *Local* mode (inside the container, as `docker exec -u gm`) uses the Unix socket `/run/git-manager/api.sock`, which grants all scopes and is limited to the `gm-admin` group. *Remote* mode (from the host) uses `--url` / `GM_URL` plus `GM_TOKEN`. `git-manager serve` starts the daemon; `git-manager config validate` works offline.
+- **CLI (cyclopts), command `git-manager`:** runs every operation in the table below, either in-process (local mode) or through the REST API (API mode). Both modes take the same arguments and print the same output, because the CLI depends only on the `Operations` protocol. `git-manager serve` starts the daemon; `git-manager config validate` works offline in either mode.
+
+**CLI modes.** The mode is chosen per invocation, from flags first and then environment variables:
+
+| Mode | Selected by | Runs operations | Scopes |
+| --- | --- | --- | --- |
+| Local | `--config PATH` / `GM_CONFIG` | In-process through `Service`, against the config file and its data directory | All, like the config file's owner |
+| API over HTTP | `--url URL` / `GM_URL`, plus `--token-file` / `GM_TOKEN_FILE` or `GM_TOKEN` | Through `HttpOperations` against a running daemon | The token's scopes |
+| API over the socket | `--socket PATH` / `GM_SOCKET` (inside the container, as `docker exec -u gm`) | Through `HttpOperations` over the Unix socket `/run/git-manager/api.sock` | All; limited to the `gm-admin` group |
+
+- Giving both a config and a URL or socket is an error, not a silent precedence rule, so a command never runs against the wrong target. With neither, the CLI reports how to configure one.
+- **One writer at a time.** The data directory holds an exclusive lock while a daemon or a local-mode command uses it. A local-mode command that finds the lock held exits with an error naming the API mode to use instead, so the CLI never becomes a second writer next to a running daemon.
+- **Local mode runs to completion.** There is no poller: `sync` runs the rebase, verification and any Claude resolution in the foreground and prints the result; scheduled cadence needs `serve`. Approvals, failures and sessions are stored in the same SQLite state, so a run started locally can be approved later in either mode.
+- **Local mode keeps the security rules.** Credentials are still read only by the orchestrating process and never passed to Claude or test commands. Inside the container, local mode uses the supervisor to run Claude and tests as `gm-claude` and `gm-tests`. Outside the container there are no separate users, so local mode logs a warning that process isolation is off; the scrubbed environments, Claude limits and approval gates still apply.
+- **`watch` needs API mode**, since events come from a running daemon. In local mode, a command's own events are printed as it runs.
+- **Errors map one to one.** `HttpOperations` turns API error responses (`403` missing scope, `409 stale`, validation errors) back into the same typed results `Service` returns, so CLI output does not depend on the mode.
 
 | Operation | REST | MCP tool | CLI |
 | --- | --- | --- | --- |
@@ -436,6 +451,8 @@ One service layer (`git_manager.core.Service`) backs all three interfaces, so RE
 | Config | `GET /config`; `PATCH /config` (sensitive keys need `approve`) | `get_config` (read only) | `git-manager config show`, `git-manager config set` |
 | Events | `GET /events` (SSE) | `wait_for_event` | `git-manager watch [--notify]` |
 | Health | `GET /healthz` | — | `git-manager doctor` |
+
+Every CLI command in this table works in both CLI modes, and every operation behind it has a REST endpoint; a new operation is added to `Operations`, `Service`, REST and `HttpOperations` together. Only process-level commands have no endpoint: `serve`, `mcp stdio` and `config validate`.
 
 The MCP server also exposes a prompt, `review_pending_rebase`, that walks an agent through the report, diff and test log and ends with a `recommend` call; the notification then tells the human to run `git-manager approve` or `git-manager reject`.
 
@@ -636,7 +653,7 @@ git-manager/
 │   ├── events/               # event bus, SSE, webhooks
 │   ├── budgets/              # Claude usage and rolling budget
 │   ├── store/                # SQLite persistence
-│   ├── cli/                  # cyclopts app; local socket or remote HTTP client
+│   ├── cli/                  # cyclopts app over Operations: in-process Service or HttpOperations
 │   ├── web/                  # FastAPI app (+ mounts MCP at /mcp)
 │   └── mcp/                  # FastMCP tools, resources, prompts
 └── tests/                    # behavior tests against throwaway repositories
@@ -658,7 +675,7 @@ git-manager/
 
 | User | Runs | Can read | Cannot read |
 | --- | --- | --- | --- |
-| `gm` | Daemon, poller, git, gh, API | `/run/secrets`, the API socket, the clone, all of `/data` | `/certs/client` |
+| `gm` | Daemon, poller, git, gh, API; local-mode CLI commands | `/run/secrets`, the API socket, the clone, all of `/data` | `/certs/client` |
 | `gm-claude` | Claude CLI, one run at a time | That run's worktree; the Claude token, passed in its environment | `/run/secrets`, `/certs`, the API socket, other worktrees |
 | `gm-tests` | `setup`, `test`, `lint` | That run's worktree, `/certs/client` | `/run/secrets`, the API socket, the Claude token |
 
@@ -669,8 +686,8 @@ git-manager/
 
 **Delivery plan**
 
-1. **M1 — Core loop:** config, poller, clean rebase, tests, `--force-with-lease` push, SQLite state, CLI over socket, Docker sidecar for tests, process isolation (supervisor and three users).
-2. **M2 — Interfaces:** REST, SSE, remote CLI with token, `git-manager watch --notify`.
+1. **M1 — Core loop:** config, poller, clean rebase, tests, `--force-with-lease` push, SQLite state, CLI in local mode (in-process, data-directory lock), Docker sidecar for tests, process isolation (supervisor and three users).
+2. **M2 — Interfaces:** REST mirroring every operation, SSE, CLI API mode (`HttpOperations` over the socket or HTTP with a token) with contract tests shared with local mode, `git-manager watch --notify`.
 3. **M3 — Claude resolution:** resolver, repo guidance and skills, commit rules and GitHub rule checks, confinement settings, Claude limits and rolling budget, resolution reports, approval flow, rerere.
 4. **M4 — MCP and retarget:** FastMCP tools and prompts, failure records and resolution sessions, `retarget`, rewritten-base handling, webhooks, gh stack detection and stack rebase.
 5. **M5 — Hardening:** crash recovery, baseline tests, Sysbox and host_socket Docker modes, docs.
@@ -684,6 +701,7 @@ git-manager/
 | Push failed resolutions to a side branch? | No. Kept local as `gm/attempt/*` in the container; export as a patch |
 | Claude auth | Claude subscription by default (`CLAUDE_CODE_OAUTH_TOKEN`); API key optional |
 | Containers vs repos | One repo per container in v1 |
+| How the CLI runs commands | Local mode runs every operation in-process from a config file; API mode runs the same operations through the REST API, which mirrors all of them. A data-directory lock keeps local mode from running next to a daemon |
 | Web UI for approvals | Not in v1; CLI, MCP and notifications only |
 | Tests that need Docker | `docker:dind` sidecar with mutual TLS, reachable only by the test step; host socket only as an explicit opt-in |
 | Where test commands come from | Extracted from `AGENTS.md`, confirmed by a human; config overrides; no task runner assumed |
