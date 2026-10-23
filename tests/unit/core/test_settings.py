@@ -110,13 +110,48 @@ def test_local_and_socket_targets_ignore_a_token(
     assert socket == SocketTarget(socket=tmp_path / "api.sock")
 
 
-def test_flag_for_one_target_and_variable_for_another_fail(
+def test_flag_target_replaces_a_variable_target(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GM_TARGET__URL", "http://gm.test")
 
+    target = Settings.model_validate({"target": {"config": config_file}}).target
+
+    assert target == LocalTarget(config=config_file)
+
+
+def test_flag_target_replaces_a_settings_file_target(tmp_path: Path) -> None:
+    write(Path("git-manager.yaml"), "target:\n  url: http://gm.test\n  token: t\n")
+
+    target = Settings.model_validate({"target": {"socket": tmp_path / "api.sock"}}).target
+
+    assert target == SocketTarget(socket=tmp_path / "api.sock")
+
+
+def test_variable_target_replaces_a_settings_file_target(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(Path("git-manager.yaml"), "target:\n  url: http://gm.test\n")
+    monkeypatch.setenv("GM_TARGET__CONFIG", str(config_file))
+
+    assert Settings().target == LocalTarget(config=config_file)
+
+
+def test_token_from_settings_file_joins_a_url_flag() -> None:
+    write(Path("git-manager.yaml"), "target:\n  socket: api.sock\n  token: file-token\n")
+
+    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+
+    assert isinstance(target, HttpTarget)
+    assert target.token.get_secret_value() == "file-token"
+
+
+def test_two_targets_in_one_source_still_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GM_TARGET__URL", "http://gm.test")
+    monkeypatch.setenv("GM_TARGET__SOCKET", "api.sock")
+
     with pytest.raises(ValidationError, match="choose one target"):
-        Settings.model_validate({"target": {"config": config_file}})
+        Settings()
 
 
 @pytest.mark.parametrize(

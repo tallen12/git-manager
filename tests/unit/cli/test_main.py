@@ -69,20 +69,28 @@ def test_doctor_without_target_explains_how_to_set_one(
     assert "no target" in capsys.readouterr().err
 
 
-def test_doctor_rejects_config_and_url_together(
-    service: Operations,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config = tmp_path / "config.yaml"
-    config.write_text("repo: {}\n", encoding="utf-8")
-    monkeypatch.setenv("GM_TARGET__URL", "http://127.0.0.1:8765")
-    monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
+def test_target_flag_replaces_the_settings_file_target(service: Operations, tmp_path: Path) -> None:
+    Path("git-manager.yaml").write_text(
+        "target:\n  url: http://127.0.0.1:8765\n  token: t\n", encoding="utf-8"
+    )
     connector = RecordingConnector(service)
     app = build_app(connect=connector, version=TEST_VERSION)
 
-    status = run_cli(app, ["doctor", "--config", str(config)])
+    status = run_cli(app, ["doctor", "--socket", str(tmp_path / "api.sock")])
+
+    assert status == 0
+    assert connector.targets == [SocketTarget(socket=tmp_path / "api.sock")]
+
+
+def test_doctor_rejects_two_target_flags(
+    service: Operations, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(
+        app, ["doctor", "--socket", str(tmp_path / "api.sock"), "--url", "http://gm.test"]
+    )
 
     assert status == 2
     assert connector.targets == []

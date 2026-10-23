@@ -46,7 +46,7 @@ listens) and `mcp` (the MCP server). Each value can come from, highest first:
    named like the variable in lower case: `gm_target__token` holds the API token.
 5. `git-manager.yaml` in the current directory (or the file `GM_SETTINGS_FILE` names).
 
-Nested values merge across sources. The API token has no flag, so it never lands in shell
+Nested values merge across sources, except the target: the highest source that names one (`config`, `url` or `socket`) wins it, so `--socket` replaces a `url` from `git-manager.yaml`. The API token has no flag, so it never lands in shell
 history. Copy [`git-manager.example.yaml`](git-manager.example.yaml) to start; relative
 paths in it resolve against the current directory. `git-manager.yaml` and `.env` are
 ignored by git, since they may hold a token.

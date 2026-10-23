@@ -85,6 +85,8 @@ class SocketTarget(BaseModel):
 # Each variant is picked by the one option that identifies it, so there is no ``kind``
 # flag, and setting none or several of them fails validation.
 _TARGET_TAGS = {"config": "local", "url": "http", "socket": "socket"}
+# The options that name a target; any one of them chooses the variant.
+TARGET_OPTIONS = frozenset(_TARGET_TAGS)
 NO_TARGET = (
     "no target: pass --config (local mode), or --url with a token, or --socket (API mode); "
     "or set target in git-manager.yaml or the GM_TARGET__* variables"

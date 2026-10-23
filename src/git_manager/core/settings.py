@@ -5,15 +5,18 @@
 only this class reads sources. Sources, highest first: init arguments (CLI flags),
 ``GM_*`` environment variables, a ``.env`` file in the current directory, files in the
 secrets directory, the YAML settings file, then defaults. Nested values merge across
-sources.
+sources, except the target: the highest source that names one (``config``, ``url`` or
+``socket``) supplies it, so ``--socket`` replaces a ``url`` from the settings file.
 """
 
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Annotated, override
 
 from cyclopts import Parameter
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
+from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
     NestedSecretsSettingsSource,
@@ -22,7 +25,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from git_manager.core.targets import NO_TARGET, Target
+from git_manager.core.targets import NO_TARGET, TARGET_OPTIONS, Target
 from git_manager.mcp.settings import McpSettings
 from git_manager.web.settings import HttpSettings
 
@@ -31,6 +34,63 @@ DEFAULT_SETTINGS_FILE = Path("git-manager.yaml")
 SECRETS_DIR_VARIABLE = "GM_SECRETS_DIR"
 # Docker and compose mount secrets here.
 DEFAULT_SECRETS_DIR = Path("/run/secrets")
+
+
+def _names_target(target: object) -> bool:
+    if isinstance(target, BaseModel):
+        return True
+    return isinstance(target, Mapping) and any(
+        target.get(option) is not None for option in TARGET_OPTIONS
+    )
+
+
+def _merge(higher: Mapping[str, object], lower: Mapping[str, object]) -> dict[str, object]:
+    """Deep-merge two source dicts; ``higher`` wins on conflicts."""
+    merged = dict(lower)
+    for key, value in higher.items():
+        below = merged.get(key)
+        if isinstance(value, Mapping) and isinstance(below, Mapping):
+            merged[key] = _merge(value, below)
+        else:
+            merged[key] = value
+    return merged
+
+
+class _TargetPrecedenceSource(PydanticBaseSettingsSource):
+    """Merges the real sources, highest first, choosing the target from one source only.
+
+    Plain deep merging would combine ``url`` from the settings file with ``--socket`` from a
+    flag and fail as two targets. Here the highest source that names a target wins it, and
+    lower sources lose their target-naming options. Other target values, like a token,
+    still merge from any source.
+    """
+
+    def __init__(
+        self, settings_cls: type[BaseSettings], sources: Sequence[PydanticBaseSettingsSource]
+    ) -> None:
+        super().__init__(settings_cls)
+        self._sources = sources
+
+    @override
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[object, str, bool]:
+        # Values come from the wrapped sources in __call__, never field by field.
+        return None, field_name, False
+
+    @override
+    def __call__(self) -> dict[str, object]:
+        merged: dict[str, object] = {}
+        target_chosen = False
+        for source in self._sources:
+            values: dict[str, object] = dict(source())
+            target = values.get("target")
+            if target_chosen and isinstance(target, Mapping):
+                values["target"] = {
+                    key: value for key, value in target.items() if key not in TARGET_OPTIONS
+                }
+            elif _names_target(target):
+                target_chosen = True
+            merged = _merge(merged, values)
+        return merged
 
 
 class Settings(BaseSettings):
@@ -46,8 +106,6 @@ class Settings(BaseSettings):
         env_file=".env",
         # Other variables in .env (without the GM_ prefix) are not ours to reject.
         dotenv_filtering="only_existing",
-        secrets_nested_delimiter="__",
-        secrets_dir_missing="ok",
         extra="forbid",
     )
 
@@ -85,10 +143,18 @@ class Settings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         settings_file = Path(os.environ.get(SETTINGS_FILE_VARIABLE, DEFAULT_SETTINGS_FILE))
         secrets_dir = Path(os.environ.get(SECRETS_DIR_VARIABLE, DEFAULT_SECRETS_DIR))
-        return (
+        sources = (
             init_settings,
             env_settings,
             dotenv_settings,
-            NestedSecretsSettingsSource(file_secret_settings, secrets_dir=secrets_dir),
+            # Passed here, not in model_config: pydantic-settings cannot see this source
+            # inside the wrapper below and would warn that the config keys are unused.
+            NestedSecretsSettingsSource(
+                file_secret_settings,
+                secrets_dir=secrets_dir,
+                secrets_dir_missing="ok",
+                secrets_nested_delimiter="__",
+            ),
             YamlConfigSettingsSource(settings_cls, yaml_file=settings_file),
         )
+        return (_TargetPrecedenceSource(settings_cls, sources),)
