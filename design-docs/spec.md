@@ -271,10 +271,13 @@ Rebased commits keep their author, message and trailers. Git Manager changes onl
 A rebased branch is pushable only when the repo's test command exits 0 on the rebased tip, inside the run's worktree, within the timeout. The command is normally read from the repo's `AGENTS.md`, not hard-coded in Git Manager's config.
 
 - **Commands:** `setup`, `test` and optional `lint`, resolved as described below (e.g. `just setup` / `just test` in a repo with a justfile, `uv run pytest -q` in another). They run as a non-root user with the same egress allowlist.
-- **Timeout:** default 30 minutes; exceeding it counts as a failure.
+- **Timeout:** `verify.timeout`, default 30 minutes, for each attempt of each command; exceeding it counts as a failure and kills the command's whole process group.
 - **Baseline (optional, default off):** run the same tests on the new base commit first. If the base is already red, the report says so and the run stops in `tests_failed` with reason `baseline_red` instead of blaming the rebase.
-- **Flaky retries:** `test_retries` (default 0). A pass on retry is flagged in the report.
+- **Flaky retries:** `verify.retries` (default 0) extra attempts for `test` only, after a failure or a timeout. A pass on retry is flagged in the report (`attempts` above 1).
 - **Artifacts kept per run:** the commands used and where they came from, exit code, duration, last 500 lines of output, JUnit XML if the command produces it.
+  - Output is stdout followed by stderr: the streams are captured separately, so their interleaving is lost.
+  - JUnit XML is found, not configured: the newest file under the worktree named like `*junit*.xml`, `TEST-*.xml`, `*test-results*.xml` or `*test-report*.xml`, written during the step and starting with a `<testsuite` element (dependency and `.git` folders are skipped, files over 10 MiB are left out).
+- **How a command runs:** the command string is split with POSIX shell quoting and run without a shell, as `gm-tests`, in the worktree, with no credentials. Pipelines, `&&` and redirections belong in a script or task runner recipe. A command whose program cannot be started fails its step with exit code 127 (as a shell reports it), so the caller can report `missing_tool`. Steps run in order (`setup`, `test`, `lint`) and the first failure stops the rest.
 - **Tests that need Docker:** served by a Docker-in-Docker sidecar (below), never by the host's Docker socket.
 
 ### Where the test commands come from
@@ -302,7 +305,7 @@ Tests that start containers (Testcontainers, `docker compose` fixtures) run agai
 2. **Same paths on both sides.** The `/data` volume (clone and worktrees) is mounted into `dind` at the same path, so bind mounts in test fixtures such as `./fixtures:/fixtures` resolve to the same files.
 3. **Shared network namespace.** `gm` runs with `network_mode: service:dind`, so ports published by test containers appear on `localhost` and tests that hardcode `localhost:5432` keep working.
 4. **Credentials only for the test step.** The verifier sets `DOCKER_HOST=tcp://localhost:2376`, `DOCKER_TLS_VERIFY=1` and `DOCKER_CERT_PATH` for `setup` and `test` only. The certificate files are readable only by the `gm-tests` user, which runs those commands with a scrubbed environment. Claude's user cannot read them, and its settings also deny docker.
-5. **Cleanup after every run.** The verifier labels the run (`gm.run=<run-id>`, passed to tests as `GM_RUN_ID`) and removes leftover containers, networks and volumes afterwards. With `reset_between_runs: true` it also prunes everything older than the run. Testcontainers' Ryuk works unchanged.
+5. **Cleanup after every run.** The verifier labels the run (`gm.run=<run-id>`, passed to tests as `GM_RUN_ID`) and, whatever the outcome, removes leftover containers, networks and volumes with that label afterwards, running `docker` as `gm-tests`. With `reset_between_runs: true` it also prunes stopped containers and networks older than the run and unused anonymous volumes; images are kept for the cache (point 6). A failed cleanup is logged and does not change the test outcome. Testcontainers' Ryuk works unchanged. Until F27, `host_socket` mode is rejected when verifying.
 6. **Image cache.** `/var/lib/docker` in `dind` is a named volume, so pulled images survive restarts. An optional `registry_mirror` speeds cold starts.
 
 ```yaml
