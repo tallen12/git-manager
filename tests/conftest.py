@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -6,6 +7,17 @@ import pytest
 from git_manager.health import HealthReporter, StaticHealthReporter
 
 TEST_VERSION = "0.0.0-test"
+
+
+@pytest.fixture(autouse=True)
+def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hide the developer's global and system git config from every git call in tests.
+
+    Hooks, signing and rebase defaults from ``~/.gitconfig`` would otherwise make git tests
+    pass in CI and fail locally (or the reverse).
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
 @pytest.fixture
