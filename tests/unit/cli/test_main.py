@@ -136,12 +136,17 @@ def test_server_commands_need_a_target_too(
         (["doctor", "--bogus"], "error: Unknown option: --bogus"),
         (["doctor", "--config", "missing.yaml"], "error: --config missing.yaml: Path does not"),
         (["--socket", "api.sock", "doctor", "--http.port", "x"], "error: http.port: Input should"),
+        (
+            ["doctor", "--url", "https://gm.test", "--plain-http", "never"],
+            "error: --plain-http: Input should be",
+        ),
     ],
     ids=[
         "invalid-flag-value",
         "unknown-flag",
         "missing-config",
         "invalid-section-flag",
+        "invalid-target-flag",
     ],
 )
 def test_invalid_flags_print_one_line_errors(
@@ -176,6 +181,21 @@ def test_doctor_reads_target_from_settings_file(
     assert status == 2
     assert connector.targets == []
     assert capsys.readouterr().err == "error: http.prot: Extra inputs are not permitted\n"
+
+
+def test_unknown_target_key_keeps_its_dotted_path(
+    service: Operations, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Path("git-manager.yaml").write_text(
+        f"target:\n  socket: {tmp_path / 'api.sock'}\n  tokn: t\n", encoding="utf-8"
+    )
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, ["doctor"])
+
+    assert status == 2
+    assert capsys.readouterr().err == "error: target.tokn: Extra inputs are not permitted\n"
 
 
 class UnexpectedResponseOperations:

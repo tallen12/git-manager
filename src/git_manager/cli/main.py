@@ -14,8 +14,11 @@ from git_manager.core import (
     ApiResponseError,
     ApiUnreachableError,
     Connector,
+    HttpTarget,
+    LocalTarget,
     Service,
     Settings,
+    SocketTarget,
     build_connector,
 )
 from git_manager.health import StaticHealthReporter
@@ -23,6 +26,10 @@ from git_manager.metadata import package_version
 
 # Exit status for invalid settings, matching cyclopts' own usage errors.
 _USAGE_ERROR = 2
+# The token has no flag, so its errors keep the ``target.token`` path.
+_TARGET_FLAGS = frozenset(
+    {*LocalTarget.model_fields, *HttpTarget.model_fields, *SocketTarget.model_fields} - {"token"}
+)
 
 
 def _describe(detail: ErrorDetails) -> str:
@@ -33,7 +40,10 @@ def _describe(detail: ErrorDetails) -> str:
         return message
     if detail["type"].startswith("path_") and isinstance(loc[-1], str):
         return f"--{loc[-1].replace('_', '-')} {detail['input']}: {message}"
-    # Drop the union tag pydantic adds after ``target`` (``target.http.url`` is ``--url``).
+    # Target fields are plain flags after the union tag pydantic adds (``target.http.url``
+    # is ``--url``); anything else, like an unknown key from a file, keeps its dotted path.
+    if loc[0] == "target" and len(loc) == 3 and loc[2] in _TARGET_FLAGS:
+        return f"--{str(loc[2]).replace('_', '-')}: {message}"
     parts = [part for index, part in enumerate(loc) if not (index == 1 and loc[0] == "target")]
     return f"{'.'.join(str(part) for part in parts)}: {message}"
 
