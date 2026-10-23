@@ -67,9 +67,10 @@ class _TargetPrecedenceSource(PydanticBaseSettingsSource):
 
     Plain deep merging would combine ``url`` from the settings file with ``--socket`` from a
     flag and fail as two targets. Here the highest source that names a target wins it, and
-    lower sources lose their target-naming options and ``plain_http``, so an opt-in written
-    for one URL never reaches another. Other target values, like a token, still merge from
-    any source.
+    lower sources lose their target-naming options. A lower source that names its own
+    target also loses ``plain_http``, so an opt-in written for one URL never reaches
+    another; a ``plain_http`` set on its own is a general policy and merges. Other target
+    values, like a token, still merge from any source.
     """
 
     def __init__(
@@ -91,8 +92,9 @@ class _TargetPrecedenceSource(PydanticBaseSettingsSource):
             values: dict[str, object] = dict(source())
             target = values.get("target")
             if target_chosen and isinstance(target, Mapping):
+                dropped = TARGET_BOUND_OPTIONS if _names_target(target) else TARGET_OPTIONS
                 values["target"] = {
-                    key: value for key, value in target.items() if key not in TARGET_BOUND_OPTIONS
+                    key: value for key, value in target.items() if key not in dropped
                 }
             elif _names_target(target):
                 target_chosen = True

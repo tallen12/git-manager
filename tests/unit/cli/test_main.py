@@ -265,3 +265,18 @@ def test_url_flag_does_not_inherit_the_settings_file_plain_http_policy(
     assert status == 2
     assert connector.targets == []
     assert "would send the token unencrypted" in capsys.readouterr().err
+
+
+def test_url_flag_uses_a_standalone_settings_file_plain_http_policy(service: Operations) -> None:
+    Path("git-manager.yaml").write_text(
+        "target:\n  token: t\n  plain_http: allowed\n", encoding="utf-8"
+    )
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, ["doctor", "--url", "http://gm.test"])
+
+    assert status == 0
+    assert [
+        target.plain_http for target in connector.targets if isinstance(target, HttpTarget)
+    ] == [PlainHttp.ALLOWED]

@@ -51,8 +51,11 @@ history.
 
 An `http://` URL is accepted only for a loopback host, so the token is never sent
 unencrypted over a network. On a network you trust, such as a compose network, set
-`plain_http: allowed` (`--plain-http allowed` or `GM_TARGET__PLAIN_HTTP`) in the same
-source as the URL: an `allowed` written next to one URL never applies to another. Copy [`git-manager.example.yaml`](git-manager.example.yaml) to start; relative
+`plain_http: allowed` (`--plain-http allowed` or `GM_TARGET__PLAIN_HTTP`). Set on its own,
+it applies to any URL. Set in the same source as a URL, it applies only to that URL and
+is dropped when a flag or variable replaces the URL.
+
+Copy [`git-manager.example.yaml`](git-manager.example.yaml) to start; relative
 paths in it resolve against the current directory. `git-manager.yaml` and `.env` are
 ignored by git, since they may hold a token.
 

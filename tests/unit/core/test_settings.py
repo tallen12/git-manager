@@ -128,6 +128,15 @@ def test_plain_http_policy_stays_with_the_url_it_was_written_for() -> None:
         Settings.model_validate({"target": {"url": "http://other.test", "token": "t"}})
 
 
+def test_standalone_plain_http_policy_applies_to_a_url_flag() -> None:
+    write(Path("git-manager.yaml"), "target:\n  token: t\n  plain_http: allowed\n")
+
+    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+
+    assert isinstance(target, HttpTarget)
+    assert target.plain_http is PlainHttp.ALLOWED
+
+
 def test_plain_http_policy_from_the_url_source_applies() -> None:
     write(
         Path("git-manager.yaml"),
