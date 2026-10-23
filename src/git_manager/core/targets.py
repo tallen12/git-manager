@@ -4,9 +4,11 @@ The cyclopts ``Parameter`` annotations only shape the CLI flags; pydantic ignore
 REST and MCP startup read the same models without the CLI.
 """
 
+import re
 from enum import StrEnum
 from ipaddress import ip_address
 from pathlib import Path
+from socket import inet_aton
 from typing import Annotated, Self, assert_never
 
 import httpx
@@ -43,6 +45,9 @@ def _check_http_url(value: str) -> str:
 HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
 
 
+_IPV4_SHORTHAND = re.compile(r"\d+(\.\d+){0,3}")
+
+
 class PlainHttp(StrEnum):
     """Where an ``http://`` URL may carry the API token unencrypted."""
 
@@ -51,12 +56,22 @@ class PlainHttp(StrEnum):
 
 
 def _is_loopback(host: str) -> bool:
-    if host.lower() == "localhost":
+    # A trailing dot is the fully qualified spelling of the same name.
+    name = host.lower().removesuffix(".")
+    # RFC 6761 reserves localhost and every name under it for loopback.
+    if name == "localhost" or name.endswith(".localhost"):
         return True
     try:
-        return ip_address(host).is_loopback
+        return ip_address(name).is_loopback
     except ValueError:
-        return False
+        pass
+    # Shorthand IPv4 like 127.1, which the resolver expands but ip_address rejects.
+    if _IPV4_SHORTHAND.fullmatch(name):
+        try:
+            return ip_address(inet_aton(name)).is_loopback
+        except OSError:
+            return False
+    return False
 
 
 class LocalTarget(BaseModel):

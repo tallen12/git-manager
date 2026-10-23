@@ -77,7 +77,15 @@ def test_invalid_targets_fail_validation(target: dict[str, object], message: str
 
 
 @pytest.mark.parametrize(
-    "url", ["http://127.0.0.1:8765", "http://localhost:8765", "http://[::1]:8765"]
+    "url",
+    [
+        "http://127.0.0.1:8765",
+        "http://localhost:8765",
+        "http://[::1]:8765",
+        "http://localhost.:8765",
+        "http://gm.localhost:8765",
+        "http://127.1:8765",
+    ],
 )
 def test_plain_http_is_allowed_to_loopback_hosts(url: str) -> None:
     target = TARGET.validate_python({"url": url, "token": "t"})
@@ -93,3 +101,9 @@ def test_plain_http_to_any_host_can_be_allowed() -> None:
 
     assert isinstance(target, HttpTarget)
     assert target.plain_http is PlainHttp.ALLOWED
+
+
+@pytest.mark.parametrize("host", ["localhost.gm.test", "1.2.3", "128.1"])
+def test_names_that_only_look_like_loopback_need_https(host: str) -> None:
+    with pytest.raises(ValidationError, match="would send the token unencrypted"):
+        TARGET.validate_python({"url": f"http://{host}:8765", "token": "t"})
