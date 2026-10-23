@@ -1,11 +1,15 @@
 from pathlib import Path
 
-from pydantic import HttpUrl, SecretStr
+from pydantic import SecretStr
 
-from git_manager.cli.connect import build_connector
-from git_manager.cli.http_operations import HttpOperations
-from git_manager.cli.settings import HttpTarget, LocalTarget, SocketTarget
-from git_manager.core import Operations
+from git_manager.core import (
+    HttpOperations,
+    HttpTarget,
+    LocalTarget,
+    Operations,
+    SocketTarget,
+    build_connector,
+)
 
 
 async def test_local_target_uses_the_local_factory(service: Operations, tmp_path: Path) -> None:
@@ -15,7 +19,9 @@ async def test_local_target_uses_the_local_factory(service: Operations, tmp_path
         requested.append(target)
         return service
 
-    target = LocalTarget(config=tmp_path / "config.yaml")
+    config = tmp_path / "config.yaml"
+    config.touch()
+    target = LocalTarget(config=config)
     async with build_connector(local=local)(target) as operations:
         assert operations is service
 
@@ -23,7 +29,7 @@ async def test_local_target_uses_the_local_factory(service: Operations, tmp_path
 
 
 async def test_http_target_opens_api_client(service: Operations) -> None:
-    target = HttpTarget(url=HttpUrl("http://gm.test"), token=SecretStr("token"))
+    target = HttpTarget(url="http://gm.test", token=SecretStr("token"))
 
     async with build_connector(local=lambda _target: service)(target) as operations:
         assert isinstance(operations, HttpOperations)

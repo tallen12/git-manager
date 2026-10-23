@@ -4,8 +4,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import httpx
 import pytest
 
-from git_manager.cli.http_operations import HttpOperations
-from git_manager.core import Operations
+from git_manager.core import HttpOperations, Operations
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION
 

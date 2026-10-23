@@ -38,13 +38,13 @@ check: lint typecheck layout test
 cli *args:
     uv run git-manager {{args}}
 
-# Start the daemon's REST server.
-serve:
-    uv run git-manager serve
+# Start the daemon's REST server (pass a target, for example --config config.yaml).
+serve *args:
+    uv run git-manager serve {{args}}
 
-# Start the MCP stdio server.
-mcp:
-    uv run git-manager mcp stdio
+# Start the MCP stdio server (pass a target, for example --config config.yaml).
+mcp *args:
+    uv run git-manager mcp stdio {{args}}
 
 # Print a random 256-bit API token.
 generate-token:

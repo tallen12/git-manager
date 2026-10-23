@@ -1,4 +1,4 @@
-"""Open the ``Operations`` implementation for a CLI target."""
+"""Open the ``Operations`` implementation for a target."""
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -6,9 +6,9 @@ from typing import Protocol, assert_never
 
 import httpx
 
-from git_manager.cli.http_operations import HttpOperations
-from git_manager.cli.settings import HttpTarget, LocalTarget, SocketTarget
-from git_manager.core import Operations
+from git_manager.core.http_operations import HttpOperations
+from git_manager.core.protocols import Operations
+from git_manager.core.settings import HttpTarget, LocalTarget, SocketTarget
 
 # The host part is ignored over a Unix socket, but httpx needs an absolute base URL.
 _SOCKET_BASE_URL = "http://git-manager"
@@ -32,9 +32,10 @@ def build_connector(*, local: Callable[[LocalTarget], Operations]) -> Connector:
         match target:
             case LocalTarget():
                 yield local(target)
-            case HttpTarget(url=url, token=token):
-                headers = {"Authorization": f"Bearer {token.get_secret_value()}"}
-                async with httpx.AsyncClient(base_url=str(url), headers=headers) as client:
+            case HttpTarget(url=url):
+                token = target.bearer_token().get_secret_value()
+                headers = {"Authorization": f"Bearer {token}"}
+                async with httpx.AsyncClient(base_url=url, headers=headers) as client:
                     yield HttpOperations(client)
             case SocketTarget(socket=socket):
                 transport = httpx.AsyncHTTPTransport(uds=str(socket))

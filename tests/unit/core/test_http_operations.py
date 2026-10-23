@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from git_manager.cli.http_operations import ApiError, ApiUnreachableError, HttpOperations
+from git_manager.core.http_operations import ApiError, ApiUnreachableError, HttpOperations
 from git_manager.health import HealthStatus
 
 

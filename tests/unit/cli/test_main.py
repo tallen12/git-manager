@@ -5,10 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from git_manager.cli.connect import build_connector
 from git_manager.cli.main import build_app
-from git_manager.cli.settings import HttpTarget, LocalTarget, SocketTarget
-from git_manager.core import Operations
+from git_manager.core import HttpTarget, LocalTarget, Operations, SocketTarget, build_connector
 from tests.conftest import TEST_VERSION, run_cli
 
 
@@ -18,7 +16,6 @@ def test_doctor_runs_in_process_with_config(
     config = tmp_path / "config.yaml"
     config.write_text("repo: {}\n", encoding="utf-8")
     app = build_app(
-        operations=service,
         connect=build_connector(local=lambda _target: service),
         version=TEST_VERSION,
     )
@@ -47,10 +44,10 @@ class RecordingConnector:
 def test_doctor_uses_api_mode_from_environment(
     service: Operations, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("GM_URL", "http://127.0.0.1:8765")
-    monkeypatch.setenv("GM_TOKEN", "env-token")
+    monkeypatch.setenv("GM_TARGET__URL", "http://127.0.0.1:8765")
+    monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
     connector = RecordingConnector(service)
-    app = build_app(operations=service, connect=connector, version=TEST_VERSION)
+    app = build_app(connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor"])
 
@@ -63,7 +60,7 @@ def test_doctor_without_target_explains_how_to_set_one(
     service: Operations, capsys: pytest.CaptureFixture[str]
 ) -> None:
     connector = RecordingConnector(service)
-    app = build_app(operations=service, connect=connector, version=TEST_VERSION)
+    app = build_app(connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor"])
 
@@ -80,13 +77,64 @@ def test_doctor_rejects_config_and_url_together(
 ) -> None:
     config = tmp_path / "config.yaml"
     config.write_text("repo: {}\n", encoding="utf-8")
-    monkeypatch.setenv("GM_URL", "http://127.0.0.1:8765")
-    monkeypatch.setenv("GM_TOKEN", "env-token")
+    monkeypatch.setenv("GM_TARGET__URL", "http://127.0.0.1:8765")
+    monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
     connector = RecordingConnector(service)
-    app = build_app(operations=service, connect=connector, version=TEST_VERSION)
+    app = build_app(connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor", "--config", str(config)])
 
     assert status == 2
     assert connector.targets == []
     assert "choose one target" in capsys.readouterr().err
+
+
+def test_target_flag_before_the_command_applies_to_it(service: Operations, tmp_path: Path) -> None:
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, ["--socket", str(tmp_path / "api.sock"), "doctor"])
+
+    assert status == 0
+    assert connector.targets == [SocketTarget(socket=tmp_path / "api.sock")]
+
+
+@pytest.mark.parametrize("command", [["serve"], ["mcp", "stdio"]], ids=["serve", "mcp-stdio"])
+def test_server_commands_need_a_target_too(
+    service: Operations, command: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, command)
+
+    assert status == 2
+    assert connector.targets == []
+    assert "no target" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("tokens", "message"),
+    [
+        (["doctor", "--url", "not a url"], "error: invalid --url"),
+        (["doctor", "--bogus"], "error: Unknown option: --bogus"),
+        (["doctor", "--config", "missing.yaml"], "error: --config missing.yaml: Path does not"),
+    ],
+    ids=["invalid-flag-value", "unknown-flag", "missing-config"],
+)
+def test_invalid_flags_print_one_line_errors(
+    service: Operations,
+    tokens: list[str],
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
+    connector = RecordingConnector(service)
+    app = build_app(connect=connector, version=TEST_VERSION)
+
+    status = run_cli(app, tokens)
+
+    assert status == 2
+    assert connector.targets == []
+    assert capsys.readouterr().err.startswith(message)
