@@ -1,25 +1,29 @@
 """CLI application and composition root."""
 
 import inspect
+import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Annotated, NoReturn
 
 from cyclopts import App, CycloptsError, Parameter
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
-from git_manager.cli import health, server
+from git_manager.cli import config, health, server
+from git_manager.config import CheckoutRepoConfig, ConfigReader, ConfigService, YamlConfigFile
 from git_manager.core import (
     Connector,
     HttpTarget,
     LocalTarget,
+    Operations,
     Service,
     Settings,
     SocketTarget,
     build_connector,
 )
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.core.unavailable import UnavailableBranches, UnavailableRuns
 from git_manager.health import HealthService, StaticHealthReporter
 from git_manager.metadata import package_version
 
@@ -65,16 +69,18 @@ def _settings(flags: Settings | None) -> Settings:
         _usage_error(error)
 
 
-def build_app(*, connect: Connector, version: str) -> App:
+def build_app(*, connect: Connector, read_config: ConfigReader, version: str) -> App:
     """Build the CLI around injected capabilities.
 
     The target flags belong to the meta app, so they apply to every command. Commands
     that need a target declare ``settings`` with ``parse=False`` and receive the
-    validated ``Settings``; ``connect`` opens the operations for its target.
+    validated ``Settings``; ``connect`` opens the operations for its target, and
+    ``read_config`` opens a config file directly for process-level commands.
     """
     app = App(name="git-manager", help="Keep git branches rebased.", version=version)
     # One module per domain registers that domain's commands.
     health.register(app, connect=connect)
+    config.register(app, connect=connect, read_config=read_config)
     server.register(app, connect=connect, version=version)
 
     @app.meta.default
@@ -106,12 +112,19 @@ def run(app: App, tokens: Sequence[str] | None = None) -> None:
 def main() -> None:
     """Wire concrete implementations and run the CLI."""
     version = package_version()
-    service = Service(
-        health=HealthService(reporter=StaticHealthReporter(version=version)),
-        config=UnavailableConfig(_NOT_BUILT_YET),
-        branches=UnavailableBranches(_NOT_BUILT_YET),
-        runs=UnavailableRuns(_NOT_BUILT_YET),
-    )
-    # Local mode will load the target's config file once config lands (M1).
-    connect = build_connector(local=lambda _target: service)
-    run(build_app(connect=connect, version=version))
+    health_service = HealthService(reporter=StaticHealthReporter(version=version))
+    repo_config = CheckoutRepoConfig()
+
+    def read_config(path: Path) -> YamlConfigFile:
+        return YamlConfigFile(path, environ=os.environ, repo_config=repo_config)
+
+    def local(target: LocalTarget) -> Operations:
+        return Service(
+            health=health_service,
+            config=ConfigService(read_config(target.config)),
+            branches=UnavailableBranches(_NOT_BUILT_YET),
+            runs=UnavailableRuns(_NOT_BUILT_YET),
+        )
+
+    connect = build_connector(local=local)
+    run(build_app(connect=connect, read_config=read_config, version=version))

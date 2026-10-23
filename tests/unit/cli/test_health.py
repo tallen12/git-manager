@@ -9,6 +9,7 @@ from git_manager.core import Operations, Service, UnavailableError, build_connec
 from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
+from tests.unit.cli.conftest import read_config
 
 
 class DownHealth:
@@ -44,7 +45,11 @@ def test_doctor_reports_operation_errors_on_one_line(
 
     config = tmp_path / "config.yaml"
     config.write_text("repo: {}\n", encoding="utf-8")
-    app = build_app(connect=build_connector(local=lambda _target: operations), version=TEST_VERSION)
+    app = build_app(
+        read_config=read_config,
+        connect=build_connector(local=lambda _target: operations),
+        version=TEST_VERSION,
+    )
 
     status = run_cli(app, ["doctor", "--config", str(config)])
 

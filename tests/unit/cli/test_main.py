@@ -19,6 +19,7 @@ from git_manager.core.targets import PlainHttp
 from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
+from tests.unit.cli.conftest import read_config
 
 
 def test_doctor_runs_in_process_with_config(
@@ -27,6 +28,7 @@ def test_doctor_runs_in_process_with_config(
     config = tmp_path / "config.yaml"
     config.write_text("repo: {}\n", encoding="utf-8")
     app = build_app(
+        read_config=read_config,
         connect=build_connector(local=lambda _target: service),
         version=TEST_VERSION,
     )
@@ -58,7 +60,7 @@ def test_doctor_uses_api_mode_from_environment(
     monkeypatch.setenv("GM_TARGET__URL", "http://127.0.0.1:8765")
     monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor"])
 
@@ -71,7 +73,7 @@ def test_doctor_without_target_explains_how_to_set_one(
     service: Operations, capsys: pytest.CaptureFixture[str]
 ) -> None:
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor"])
 
@@ -85,7 +87,7 @@ def test_target_flag_replaces_the_settings_file_target(service: Operations, tmp_
         "target:\n  url: http://127.0.0.1:8765\n  token: t\n", encoding="utf-8"
     )
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor", "--socket", str(tmp_path / "api.sock")])
 
@@ -97,7 +99,7 @@ def test_doctor_rejects_two_target_flags(
     service: Operations, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(
         app, ["doctor", "--socket", str(tmp_path / "api.sock"), "--url", "http://gm.test"]
@@ -110,7 +112,7 @@ def test_doctor_rejects_two_target_flags(
 
 def test_target_flag_before_the_command_applies_to_it(service: Operations, tmp_path: Path) -> None:
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["--socket", str(tmp_path / "api.sock"), "doctor"])
 
@@ -123,7 +125,7 @@ def test_server_commands_need_a_target_too(
     service: Operations, command: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, command)
 
@@ -161,7 +163,7 @@ def test_invalid_flags_print_one_line_errors(
 ) -> None:
     monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, tokens)
 
@@ -177,7 +179,7 @@ def test_doctor_reads_target_from_settings_file(
         f"target:\n  socket: {tmp_path / 'api.sock'}\nhttp:\n  prot: 1\n", encoding="utf-8"
     )
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor"])
 
@@ -193,7 +195,7 @@ def test_unknown_target_key_keeps_its_dotted_path(
         f"target:\n  socket: {tmp_path / 'api.sock'}\n  tokn: t\n", encoding="utf-8"
     )
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor"])
 
@@ -218,7 +220,9 @@ def test_doctor_reports_an_unexpected_response_as_one_line(
         branches=UnavailableBranches(reason),
         runs=UnavailableRuns(reason),
     )
-    app = build_app(connect=RecordingConnector(operations), version=TEST_VERSION)
+    app = build_app(
+        read_config=read_config, connect=RecordingConnector(operations), version=TEST_VERSION
+    )
 
     status = run_cli(app, ["doctor", "--socket", str(tmp_path / "api.sock")])
 
@@ -231,7 +235,7 @@ def test_plain_http_flag_allows_a_remote_url(
 ) -> None:
     monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor", "--url", "http://gm.test", "--plain-http", "allowed"])
 
@@ -247,7 +251,7 @@ def test_other_flags_keep_the_settings_file_plain_http_policy(service: Operation
         encoding="utf-8",
     )
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor", "--http.port", "9000"])
 
@@ -265,7 +269,7 @@ def test_url_flag_does_not_inherit_the_settings_file_plain_http_policy(
         encoding="utf-8",
     )
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor", "--url", "http://other.test"])
 
@@ -279,7 +283,7 @@ def test_url_flag_uses_a_standalone_settings_file_plain_http_policy(service: Ope
         "target:\n  token: t\n  plain_http: allowed\n", encoding="utf-8"
     )
     connector = RecordingConnector(service)
-    app = build_app(connect=connector, version=TEST_VERSION)
+    app = build_app(read_config=read_config, connect=connector, version=TEST_VERSION)
 
     status = run_cli(app, ["doctor", "--url", "http://gm.test"])
 
