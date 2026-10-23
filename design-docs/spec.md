@@ -415,15 +415,44 @@ One service layer (`git_manager.core.Service`) backs all three interfaces, so RE
 - **MCP (FastMCP):** mounted on the same server at `/mcp` (streamable HTTP). `git-manager mcp stdio --url ...` provides a stdio bridge for MCP clients that only speak stdio. Its token has `read` and `operate` but never `approve`, so retarget, approve and sensitive config tools are not exposed at all. Tools are hand-written (not auto-generated from OpenAPI) for clear descriptions.
 - **CLI (cyclopts), command `git-manager`:** runs every operation in the table below, either in-process (local mode) or through the REST API (API mode). Both modes take the same arguments and print the same output, because the CLI depends only on the `Operations` protocol. `git-manager serve` starts the daemon; `git-manager config validate` works offline in either mode.
 
-**CLI modes.** The mode is chosen per invocation, from flags first and then environment variables:
+**CLI modes.** The mode is chosen per invocation by the client settings described below:
 
 | Mode | Selected by | Runs operations | Scopes |
 | --- | --- | --- | --- |
 | Local | `--config PATH` / `GM_CONFIG` | In-process through `Service`, against the config file and its data directory | All, like the config file's owner |
-| API over HTTP | `--url URL` / `GM_URL`, plus `--token-file` / `GM_TOKEN_FILE` or `GM_TOKEN` | Through `HttpOperations` against a running daemon | The token's scopes |
+| API over HTTP | `--url URL` / `GM_URL`, plus `--token-file` / `GM_TOKEN_FILE` or `GM_TOKEN` (environment only) | Through `HttpOperations` against a running daemon | The token's scopes |
 | API over the socket | `--socket PATH` / `GM_SOCKET` (inside the container, as `docker exec -u gm`) | Through `HttpOperations` over the Unix socket `/run/git-manager/api.sock` | All; limited to the `gm-admin` group |
 
-- Giving both a config and a URL or socket is an error, not a silent precedence rule, so a command never runs against the wrong target. With neither, the CLI reports how to configure one.
+- **Client settings (pydantic-settings).** The mode options are fields of one `ClientSettings` model (`BaseSettings`, `env_prefix="GM_"`), so flags, environment variables, types and validation live in one place. CLI flags that cyclopts parses are passed in as init arguments, which pydantic-settings ranks above `GM_*` environment variables. The token is a `SecretStr`, never printed or logged. `serve` and `config validate` read the same `config` field, so one `GM_CONFIG` serves every command. Server settings keep their nested names (for example `GM_SERVER__SOCKET`), so they never collide with these top-level client fields.
+- **Validation produces one target.** A model validator checks that exactly one mode is configured, and `target()` returns it as a discriminated union, `LocalTarget | HttpTarget | SocketTarget`; the composition root builds `Service` or `HttpOperations` with a `match` on it. Giving both a config and a URL or socket, a URL without a token, or both `token` and `token_file` fails validation, so a command never runs against the wrong target. With none of them, the error says how to configure one.
+
+```python
+class LocalTarget(BaseModel):
+    kind: Literal["local"] = "local"
+    config: Path
+
+class HttpTarget(BaseModel):
+    kind: Literal["http"] = "http"
+    url: HttpUrl
+    token: SecretStr               # read from token_file when that is given
+
+class SocketTarget(BaseModel):
+    kind: Literal["socket"] = "socket"
+    socket: Path
+
+Target = Annotated[LocalTarget | HttpTarget | SocketTarget, Field(discriminator="kind")]
+
+class ClientSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="GM_")
+    config: Path | None = None     # --config / GM_CONFIG
+    url: HttpUrl | None = None     # --url / GM_URL
+    token: SecretStr | None = None # GM_TOKEN (no flag, to keep it out of shell history)
+    token_file: Path | None = None # --token-file / GM_TOKEN_FILE
+    socket: Path | None = None     # --socket / GM_SOCKET
+
+    def target(self) -> Target: ...  # the one mode the validator allowed
+```
+
 - **One writer at a time.** The data directory holds an exclusive lock while a daemon or a local-mode command uses it. A local-mode command that finds the lock held exits with an error naming the API mode to use instead, so the CLI never becomes a second writer next to a running daemon.
 - **Local mode runs to completion.** There is no poller: `sync` runs the rebase, verification and any Claude resolution in the foreground and prints the result; scheduled cadence needs `serve`. Approvals, failures and sessions are stored in the same SQLite state, so a run started locally can be approved later in either mode.
 - **Local mode keeps the security rules.** Credentials are still read only by the orchestrating process and never passed to Claude or test commands. Inside the container, local mode uses the supervisor to run Claude and tests as `gm-claude` and `gm-tests`. Outside the container there are no separate users, so local mode logs a warning that process isolation is off; the scrubbed environments, Claude limits and approval gates still apply.
