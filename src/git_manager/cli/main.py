@@ -24,9 +24,16 @@ def build_app(*, reporter: HealthReporter, version: str) -> App:
 
         uvicorn.run(create_app(reporter=reporter, version=version), host=host, port=port)
 
-    @app.command
-    def mcp() -> None:
-        """Start the MCP server over stdio."""
+    mcp = App(name="mcp", help="MCP interface.")
+    app.command(mcp)
+
+    @mcp.command
+    def stdio() -> None:
+        """Serve MCP over stdio.
+
+        Until M4 this serves the tools in-process; M4 turns it into the spec's stdio bridge
+        to a running daemon (``--url``).
+        """
         from git_manager.mcp.server import create_server
 
         create_server(reporter=reporter).run()

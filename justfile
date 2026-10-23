@@ -40,7 +40,7 @@ web:
 
 # Start the MCP stdio server.
 mcp:
-    uv run git-manager mcp
+    uv run git-manager mcp stdio
 
 # Print a random 256-bit API token.
 generate-token:
