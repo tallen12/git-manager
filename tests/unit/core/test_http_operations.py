@@ -70,3 +70,18 @@ async def test_unexpected_body_raises_response_error() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         with pytest.raises(ApiResponseError, match="unexpected response from http://test/healthz"):
             await HttpOperations(client).health()
+
+
+async def test_validation_error_detail_lists_each_issue() -> None:
+    body = {
+        "detail": [
+            {"type": "missing", "loc": ["body", "branch"], "msg": "Field required"},
+            {"type": "int_parsing", "loc": ["query", "limit"], "msg": "Input should be int"},
+        ]
+    }
+    transport = httpx.MockTransport(lambda _request: httpx.Response(422, json=body))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with pytest.raises(ApiError) as raised:
+            await HttpOperations(client).health()
+
+    assert raised.value.detail == "body.branch: Field required; query.limit: Input should be int"

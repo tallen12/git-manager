@@ -26,10 +26,23 @@ class ApiResponseError(Exception):
     """The API answered with a body that is not the expected schema (not Git Manager?)."""
 
 
+class _ValidationIssue(BaseModel):
+    """One entry of FastAPI's request validation ``detail`` list."""
+
+    loc: list[str | int]
+    msg: str
+
+
 class _ErrorBody(BaseModel):
     """FastAPI's error body; ``detail`` is a string or a list of validation errors."""
 
-    detail: str | list[object]
+    detail: str | list[_ValidationIssue]
+
+
+def _join_issues(issues: list[_ValidationIssue]) -> str:
+    return "; ".join(
+        f"{'.'.join(str(part) for part in issue.loc)}: {issue.msg}" for issue in issues
+    )
 
 
 def _error_detail(response: httpx.Response) -> str:
@@ -38,7 +51,7 @@ def _error_detail(response: httpx.Response) -> str:
     except ValidationError:
         text = response.text.strip()
     else:
-        text = detail if isinstance(detail, str) else str(detail)
+        text = detail if isinstance(detail, str) else _join_issues(detail)
     if len(text) > MAX_DETAIL_LENGTH:
         return f"{text[:MAX_DETAIL_LENGTH]}..."
     return text
