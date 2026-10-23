@@ -4,7 +4,7 @@ import pytest
 from pydantic import SecretStr, TypeAdapter, ValidationError
 
 from git_manager.core import HttpTarget, LocalTarget, SocketTarget, Target
-from git_manager.core.targets import PlainHttp
+from git_manager.core.targets import PlainHttp, redact_url
 
 TARGET: TypeAdapter[LocalTarget | HttpTarget | SocketTarget] = TypeAdapter(Target)
 
@@ -107,3 +107,16 @@ def test_plain_http_to_any_host_can_be_allowed() -> None:
 def test_names_that_only_look_like_loopback_need_https(host: str) -> None:
     with pytest.raises(ValidationError, match="would send the token unencrypted"):
         TARGET.validate_python({"url": f"http://{host}:8765", "token": "t"})
+
+
+@pytest.mark.parametrize("url", ["http://alice:hunter2@gm.test:1", "not a url://alice:hunter2@x"])
+def test_url_errors_never_show_a_password(url: str) -> None:
+    with pytest.raises(ValidationError) as raised:
+        TARGET.validate_python({"url": url, "token": "t"})
+
+    assert "hunter2" not in str(raised.value.errors()[0]["msg"])
+
+
+def test_redact_url_hides_userinfo_only() -> None:
+    assert redact_url("https://alice:hunter2@gm.test/x?y=1") == "https://***@gm.test/x?y=1"
+    assert redact_url("https://gm.test/a@b") == "https://gm.test/a@b"

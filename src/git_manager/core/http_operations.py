@@ -3,6 +3,7 @@
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from git_manager.core.targets import redact_url
 from git_manager.health import HealthStatus
 
 # Keeps a proxy's HTML error page from flooding the terminal.
@@ -72,7 +73,8 @@ class HttpOperations:
         try:
             return HealthStatus.model_validate_json(response.content)
         except ValidationError as error:
-            msg = f"unexpected response from {response.url}: {error.error_count()} error(s)"
+            url = redact_url(str(response.url))
+            msg = f"unexpected response from {url}: {error.error_count()} error(s)"
             raise ApiResponseError(msg) from error
 
     async def _get(self, path: str) -> httpx.Response:

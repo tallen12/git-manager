@@ -29,13 +29,20 @@ from pydantic import (
 )
 
 _HTTP_URL: TypeAdapter[HttpUrl] = TypeAdapter(HttpUrl)
+# The ``user:password@`` part of a URL; matched as text so even an invalid URL is redacted.
+_USERINFO = re.compile(r"(?<=://)[^/?#@]*@")
+
+
+def redact_url(url: str) -> str:
+    """Return ``url`` with any ``user:password@`` replaced, for messages and logs."""
+    return _USERINFO.sub("***@", url)
 
 
 def _check_http_url(value: str) -> str:
     try:
         _HTTP_URL.validate_python(value)
     except ValidationError as error:
-        msg = f"invalid --url {value!r}: {error.errors()[0]['msg']}"
+        msg = f"invalid --url {redact_url(value)!r}: {error.errors()[0]['msg']}"
         raise ValueError(msg) from error
     return value
 
@@ -121,8 +128,8 @@ class HttpTarget(BaseModel):
                 url = httpx.URL(self.url)
                 if url.scheme == "http" and not _is_loopback(url.host):
                     msg = (
-                        f"--url {self.url} would send the token unencrypted: use https, a "
-                        "loopback host, or --plain-http allowed"
+                        f"--url {redact_url(self.url)} would send the token unencrypted: "
+                        "use https, a loopback host, or --plain-http allowed"
                     )
                     raise ValueError(msg)
                 return self

@@ -85,3 +85,14 @@ async def test_validation_error_detail_lists_each_issue() -> None:
             await HttpOperations(client).health()
 
     assert raised.value.detail == "body.branch: Field required; query.limit: Input should be int"
+
+
+async def test_unexpected_body_error_hides_url_password() -> None:
+    transport = httpx.MockTransport(lambda _request: httpx.Response(200, text="<html></html>"))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://alice:hunter2@test"
+    ) as client:
+        with pytest.raises(ApiResponseError) as raised:
+            await HttpOperations(client).health()
+
+    assert "hunter2" not in str(raised.value)
