@@ -67,7 +67,7 @@ The nine requirements cover the happy path well; the gaps are mostly about histo
 
 A single long-running container hosts the daemon; every interface calls the same service core, and only the worker modules touch git, Claude or the network.
 
-![Architecture: three interfaces share one service core inside one container](images/architecture.png)
+![Architecture: three interfaces share one service core](images/architecture.png)
 
 The host only talks to the container through the API, the MCP endpoint or `docker exec`; the container never mounts the developer's working copy. The CLI can also run the same service core in-process from a config file, without a daemon (local mode; see Interfaces). Each sync runs in a throwaway `git worktree` under `/data`, so a crashed or rejected run leaves the managed clone untouched.
 

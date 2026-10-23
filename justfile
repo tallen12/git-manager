@@ -49,3 +49,7 @@ generate-token:
 # Build the runtime image.
 docker-build:
     docker build -t git-manager .
+
+# Render design-docs/images/*.dot to PNG next to each source (needs Graphviz).
+diagrams:
+    uv run python -c "import pathlib, subprocess; [subprocess.run(['dot', '-Tpng', '-Gdpi=110', str(f), '-o', str(f.with_suffix('.png'))], check=True) for f in sorted(pathlib.Path('design-docs/images').glob('*.dot'))]"

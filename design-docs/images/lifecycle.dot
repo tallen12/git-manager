@@ -1,0 +1,67 @@
+// Branch sync lifecycle. Render with `just diagrams`.
+digraph lifecycle {
+  graph [
+    fontname="Helvetica", fontsize=15, fontcolor="#111111",
+    label=<<B>Every push passes tests; AI-resolved rebases wait for approval</B>>,
+    labelloc=t, labeljust=l,
+    bgcolor="white", pad="0.3,0.25", nodesep=0.6, ranksep=0.75,
+    splines=polyline, newrank=true
+  ];
+  node [
+    shape=box, style="rounded,filled", fillcolor="white", color="#C8C6BE",
+    penwidth=1.3, fontname="Helvetica", fontsize=13, fontcolor="#1A1A1A",
+    width=1.6, height=0.55, fixedsize=true
+  ];
+  edge [
+    color="#BDBBB2", penwidth=1.3, arrowsize=0.6,
+    fontname="Helvetica", fontsize=11, fontcolor="#555555"
+  ];
+
+  subgraph cluster_body {
+    label="Amber states notify and wait for a human. A stale or rejected approval sends the branch back to Behind.";
+    labelloc=b; labeljust=l; fontsize=11; fontcolor="#555555";
+    pencolor="transparent"; margin=12;
+
+    idle      [label="Idle", group=c1];
+    behind    [label="Behind", group=c2];
+    scheduled [label="Scheduled", group=c3];
+    rebasing  [label="Rebasing", group=c4];
+    pushing   [label="Pushing", group=c1];
+    decide    [label="Needs approval?", shape=diamond, style="filled", width=1.9, height=0.9, group=c2];
+    verifying [label="Verifying", group=c3];
+    resolving [label=<Resolving<BR/><FONT POINT-SIZE="11" COLOR="#666666">Claude CLI</FONT>>, group=c4];
+    awaiting  [label=<<B>Awaiting approval</B>>, width=1.9, fillcolor="#E6EFFA", color="#2F6FD0", penwidth=2, group=c2];
+    failed    [label="Tests failed", fillcolor="#FFF6E0", color="#F5B82E", penwidth=2, group=c3];
+    human     [label="Needs human", fillcolor="#FFF6E0", color="#F5B82E", penwidth=2, group=c4];
+    gap       [shape=point, width=0.01, height=0.01, fixedsize=true, style="", color="#BDBBB2", label="", group=c1];
+
+    { rank=same; idle; behind; scheduled; rebasing; }
+    { rank=same; pushing; decide; verifying; resolving; }
+    { rank=same; gap; awaiting; failed; human; }
+
+    idle -> behind [label="base moved"];
+    behind -> scheduled [label="cadence due"];
+    scheduled -> rebasing;
+
+    rebasing -> verifying [label="  clean"];
+    rebasing -> resolving [label="  conflicts"];
+
+    // Row two reads right to left; reversed edges keep the column order.
+    pushing -> decide [dir=back, label="no"];
+    decide -> verifying [dir=back, label="pass"];
+    verifying -> resolving [dir=back];
+
+    decide -> awaiting [label="  yes"];
+    verifying -> failed [label="  fail"];
+    resolving -> human [label="  gives up"];
+
+    idle -> pushing [dir=back, label="  pushed"];
+    // Awaiting approval loops back to Pushing through a bend point below it.
+    pushing -> gap [dir=back];
+    gap -> awaiting [dir=none, label="approved"];
+
+    // Column alignment only.
+    behind -> decide [style=invis, weight=10];
+    scheduled -> verifying [style=invis, weight=10];
+  }
+}

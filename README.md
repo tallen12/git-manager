@@ -18,6 +18,7 @@ just check     # format check, lint, type check, tests
 just coverage  # tests with branch coverage
 just serve     # REST on http://127.0.0.1:8765, GET /healthz
 just mcp       # MCP over stdio
+just diagrams  # re-render design-docs/images/*.dot (needs Graphviz)
 ```
 
 The CLI is `git-manager`; once installed on `PATH`, git also runs it as `git manager`.
