@@ -669,7 +669,7 @@ class Event(BaseModel):
     id: int; at: datetime; kind: str; branch_id: str; run_id: str | None; data: dict
 ```
 
-State persists in SQLite (`/data/state.db`) via SQLModel or plain SQLAlchemy; the clone lives in `/data/repo` and run worktrees in `/data/worktrees`. With one repo per container, `repo_id` is fixed per instance but kept in the models so a multi-repo mode can be added later.
+State persists in SQLite (`/data/state.db`) via SQLModel or plain SQLAlchemy; the clone lives in `/data/repo` and run worktrees in `/data/worktrees`. With one repo per container, `repo_id` is fixed per instance but kept in the models so a multi-repo mode can be added later. Each row stores its record as the JSON of its Pydantic model, plus copies of the fields queries filter or sort on, so records round-trip exactly and new optional fields need no migration. Schema migrations are append-only SQL steps versioned by SQLite's `user_version`; each runs in one transaction with its version bump, and a database newer than the code is refused. All database calls run on one worker thread, off the event loop. The one-writer lock is an advisory `flock` on `/data/git-manager.lock`, which the kernel releases when the holder exits, so a crash never leaves a stale lock.
 
 ## Project setup, delivery plan and decisions
 

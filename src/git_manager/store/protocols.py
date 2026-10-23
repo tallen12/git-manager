@@ -71,3 +71,19 @@ class EventRepository(Protocol):
     async def list(self, *, after: int = 0, limit: int = 100) -> Sequence[Event]:
         """Return events with an id above ``after``, oldest first."""
         ...
+
+
+class DataDirectoryLock(Protocol):
+    """The exclusive hold one process keeps on a data directory while it uses it.
+
+    The daemon and every local-mode command acquire it before opening ``state.db``, so
+    there is never a second writer.
+    """
+
+    def acquire(self) -> None:
+        """Take the lock without waiting. Raises ``DataDirectoryLockedError`` if held."""
+        ...
+
+    def release(self) -> None:
+        """Give the lock up; does nothing if it is not held."""
+        ...
