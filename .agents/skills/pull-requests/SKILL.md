@@ -45,8 +45,7 @@ write "N/A" or filler.
 ```markdown
 ## Summary
 
-One or two short paragraphs: what this changes and why. Lead with the outcome for users
-or maintainers. Mention the spec milestone or decision it implements.
+One or two short paragraphs: what this changes and why. Lead with the outcome for users or maintainers. Mention the spec milestone or decision it implements.
 
 ## Changes
 
@@ -58,10 +57,8 @@ or maintainers. Mention the spec milestone or decision it implements.
 
 - **Users:** new or changed CLI commands, REST endpoints, MCP tools or output.
 - **Breaking changes:** what breaks and how to migrate. Match a `!` in the title.
-- **Configuration and deployment:** new settings, environment variables, Docker or
-  dependency changes.
-- **Security:** any change to credentials, scopes, approvals or permissions, as defined
-  in the spec's security rules.
+- **Configuration and deployment:** new settings, environment variables, Docker or dependency changes.
+- **Security:** any change to credentials, scopes, approvals or permissions, as defined in the spec's security rules.
 
 ## Testing
 
@@ -90,8 +87,9 @@ Closes #<issue>
 - Do not add AI or tool attribution (for example "Generated with ..." lines or
   `Co-Authored-By` trailers). The description becomes the commit message on `main`.
 - Do not paste work branch commit messages, full diffs or long logs. Summarize instead.
-- Wrap prose at about 72 characters so the squash commit reads well in `git log`.
-  Markdown headings and lists are fine.
+- Do not hard-wrap the description. Write each paragraph and each bullet as a single
+  line; GitHub renders line breaks inside a paragraph literally, so wrapped text shows up
+  as ragged short lines.
 
 ## Creating or updating the pull request
 
