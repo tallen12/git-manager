@@ -7,3 +7,5 @@ secrets
 .ruff_cache
 .claude
 .worktrees
+.coverage
+coverage.xml

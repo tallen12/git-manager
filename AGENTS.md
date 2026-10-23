@@ -24,6 +24,7 @@ global interpreter.
 - Lint: `just lint`
 - Type check: `just typecheck`
 - Test: `just test`
+- Test coverage: `just coverage`
 - All required checks: `just check`
 
 ## Working across agents

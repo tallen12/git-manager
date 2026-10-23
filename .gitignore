@@ -14,6 +14,12 @@ wheels/
 .ruff_cache/
 .mypy_cache/
 
+# Coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # Local config and secrets
 .env
 secrets/

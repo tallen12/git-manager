@@ -23,6 +23,10 @@ typecheck:
 test:
     uv run pytest
 
+# Run the test suite with branch coverage (writes coverage.xml).
+coverage:
+    uv run pytest --cov --cov-report=term --cov-report=xml
+
 # Run all required checks.
 check: lint typecheck test
 

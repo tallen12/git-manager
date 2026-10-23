@@ -15,6 +15,7 @@ Requires [uv](https://docs.astral.sh/uv/) and [just](https://just.systems/).
 ```sh
 just setup     # install locked dependencies (Python 3.14 is fetched by uv)
 just check     # format check, lint, type check, tests
+just coverage  # tests with branch coverage
 just cli health
 just web       # REST on http://127.0.0.1:8765, GET /healthz
 just mcp       # MCP over stdio
