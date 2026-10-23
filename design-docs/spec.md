@@ -734,6 +734,15 @@ git-manager/
 - The Unix socket is mode `0660`, group `gm-admin`. Operators reach it with `docker exec -u gm`; neither `gm-claude` nor `gm-tests` is in that group.
 - The test suite cannot approve, push or read git credentials, even though it is arbitrary repo code with Docker access.
 
+**Supervisor protocol.** The daemon asks the supervisor to start a process through a Unix socket, `/run/git-manager/supervisor.sock` (mode `0600`, owned by `gm`, so only the daemon can ask). The messages are defined once in `git_manager.isolation.models` and framed by `git_manager.isolation.wire`; the daemon's side is `SupervisedProcessRunner` over a `SupervisorChannel` protocol, so it is tested anywhere against a stand-in supervisor.
+
+- **Framing:** one connection per command; the daemon sends one `SpawnRequest` as a UTF-8 JSON line and reads one answer line (at most 64 MiB).
+- **Request:** `version` (1), `user` (`gm-claude` or `gm-tests`, never `gm` or root), `argv`, an absolute `cwd`, the complete `env`, an optional `timeout_s` and `stdin`.
+- **Environment:** the daemon builds `env` from an allowlist of its own variables (`PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`) plus what the caller passes; nothing else is inherited. The supervisor runs the command with exactly that environment (`env -i`), adding only `HOME`, `USER` and `LOGNAME` for the target user when `env` does not set them.
+- **Process group and timeout:** the command starts in a new session. When it exits, anything left in its group is killed. At `timeout_s` the group gets `SIGTERM`, then `SIGKILL` after a short grace period. Closing the connection before the answer also kills the group.
+- **Answers** (discriminated by `kind`): `completed` (exit code, negative for a signal; stdout; stderr; duration), `timed_out` (output read so far, duration) or `failed` with `start_failed` (program or `cwd` missing, raised to callers as `OSError`) or `invalid_request` (wrong version, user or fields).
+- `gm` commands (git, gh) do not go through the supervisor: the daemon already runs as `gm` and starts them itself, with the same scrubbing, process group and timeout rules. Outside the container, `LocalProcessRunner` runs every command that way as the current user and logs once that process isolation is off.
+
 **Delivery plan**
 
 1. **M1 — Core loop:** config, poller, clean rebase, tests, `--force-with-lease` push, SQLite state, CLI in local mode (in-process, data-directory lock), Docker sidecar for tests, process isolation (supervisor and three users).

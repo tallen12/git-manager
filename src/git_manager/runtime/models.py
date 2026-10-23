@@ -28,8 +28,9 @@ def _frozen_env(env: Mapping[str, str]) -> Mapping[str, str]:
 class Command:
     """One subprocess to run, as an argument list (never through a shell).
 
-    ``env`` is the complete environment: runners start from an empty one, so credentials
-    reach a command only when the caller passes them here on purpose.
+    ``env`` is the complete environment apart from a short allowlist of non-secret
+    variables (``PATH``, locale, ``TMPDIR``; see ``isolation.environment``) that runners
+    add, so credentials reach a command only when the caller passes them here on purpose.
     """
 
     argv: tuple[str, ...]
