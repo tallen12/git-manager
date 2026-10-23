@@ -33,4 +33,4 @@ async def test_every_implementation_reports_health(
     implementation: Callable[[Operations], AbstractAsyncContextManager[Operations]],
 ) -> None:
     async with implementation(service) as operations:
-        assert await operations.health() == EXPECTED
+        assert await operations.health.status() == EXPECTED

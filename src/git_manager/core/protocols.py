@@ -2,17 +2,37 @@
 
 from typing import Protocol
 
-from git_manager.health import HealthStatus
+from git_manager.branches.protocols import BranchOperations
+from git_manager.config.protocols import ConfigOperations
+from git_manager.health.protocols import HealthOperations
+from git_manager.rebasing.protocols import RunOperations
 
 
 class Operations(Protocol):
-    """Every Git Manager operation.
+    """Every Git Manager operation, grouped by domain (``operations.branches.sync``).
 
     ``Service`` implements it in-process and ``HttpOperations`` through the REST API, so
-    the CLI behaves the same in local and API mode. Add an operation here, to ``Service``,
-    to REST and to ``HttpOperations`` together.
+    the CLI behaves the same in local and API mode. Each group's protocol lives in its
+    domain; add an operation there, to the domain's in-process service, to its REST
+    router and to its HTTP client together. A new domain adds one attribute here.
     """
 
-    async def health(self) -> HealthStatus:
-        """Report whether Git Manager is alive and which version is running."""
+    @property
+    def health(self) -> HealthOperations:
+        """Liveness and version."""
+        ...
+
+    @property
+    def config(self) -> ConfigOperations:
+        """The effective repo config."""
+        ...
+
+    @property
+    def branches(self) -> BranchOperations:
+        """Tracked branches and syncing."""
+        ...
+
+    @property
+    def runs(self) -> RunOperations:
+        """Runs and their reports."""
         ...

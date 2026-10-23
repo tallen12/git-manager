@@ -410,6 +410,8 @@ All of these need only the `operate` scope, so MCP can use them. None of them pu
 
 One service layer (`git_manager.core.Service`) backs all three interfaces, so REST, MCP and CLI cannot drift: each is a thin adapter over the same Pydantic models. The service's public operations are defined once as a protocol (`git_manager.core.Operations`). `Service` implements it in-process; `HttpOperations` implements it as an httpx client of the REST API. REST mirrors every operation, so either implementation can back the CLI, and one contract test suite runs against both.
 
+`Operations` is composed of one small protocol per domain, reached as attributes: `operations.health` (`HealthOperations`), `operations.config` (`ConfigOperations`), `operations.branches` (`BranchOperations`) and `operations.runs` (`RunOperations`), with more added by later milestones. Each protocol lives in its domain next to its in-process service; its REST router and HTTP client mirror live in `web/<domain>.py` and its commands in `cli/<domain>.py`. `Service` and `HttpOperations` are bundles of one implementation per domain, so adding an operation touches only that domain's files. A domain a target cannot serve yet (in-process before its M1 feature lands, over REST before M2) is filled by a stand-in from `core.unavailable` that raises `UnavailableError` with the reason. Operation errors are typed (`NotFoundError`, `ConflictError`, `UnavailableError` in `core.errors`) and map one to one to HTTP statuses.
+
 - **REST (FastAPI):** `/api/v1/...`, OpenAPI at `/docs`, SSE at `/api/v1/events`. Every request needs a bearer token. Scopes: `read`; `operate` (sync, pause, resume, track, non-sensitive config); `approve` (approvals, retargets, test-command confirmation, budget reset, sensitive config).
 - **Sensitive config** needs `approve`: anything under `verify`, `claude`, `stack.mode` and `budget`, plus `approval_policy`, `auto_push_clean`, `notify.webhooks` and `signing_key`. That way an agent cannot set the test command, widen Claude's tools or skip approval through config.
 - **MCP (FastMCP):** mounted on the same server at `/mcp` (streamable HTTP). `git-manager mcp stdio --url ...` provides a stdio bridge for MCP clients that only speak stdio. Its token has `read` and `operate` but never `approve`, so retarget, approve and sensitive config tools are not exposed at all. Tools are hand-written (not auto-generated from OpenAPI) for clear descriptions.
@@ -590,6 +592,8 @@ branches:
 ```
 
 **Core Pydantic models** (shared by config, DB rows, REST bodies and MCP tool schemas)
+
+The models below are the full v1 shapes. Each milestone's contracts feature lands the part it needs, so M1's models omit the fields later milestones add: `TrackedBranch` has no `stack` (M4) and no `config` (a branch's effective config is looked up by name from the repo config instead of being copied into its record), and `Run` has no `mode`, `stack` (M4), `conflicts` or `claude` (M3). `reason` is a `Reason` enum rather than a string, and each milestone adds its values. `Event` carries `kind` (an `EventKind`: tracked, untracked, state_changed, run_started, run_finished, pushed) plus the new `state` and `reason`; `notify.on` names states and the `pushed` and `stack_removed` events. `repo.trust_repo_config` is sensitive config like `signing_key`, since it lets anyone with commit access change Git Manager's behavior, and `repo.data_dir` (default `/data`) locates the clone, worktrees and `state.db` so local mode can run outside the container.
 
 ```python
 class BranchState(StrEnum):

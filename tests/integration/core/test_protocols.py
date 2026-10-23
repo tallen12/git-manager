@@ -30,4 +30,4 @@ async def test_operations_contract_health(
     implementation: Callable[[Operations], AbstractAsyncContextManager[Operations]],
 ) -> None:
     async with implementation(service) as operations:
-        assert await operations.health() == EXPECTED
+        assert await operations.health.status() == EXPECTED

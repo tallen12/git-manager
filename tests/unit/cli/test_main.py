@@ -11,10 +11,12 @@ from git_manager.core import (
     HttpTarget,
     LocalTarget,
     Operations,
+    Service,
     SocketTarget,
     build_connector,
 )
 from git_manager.core.targets import PlainHttp
+from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
 
@@ -199,19 +201,24 @@ def test_unknown_target_key_keeps_its_dotted_path(
     assert capsys.readouterr().err == "error: target.tokn: Extra inputs are not permitted\n"
 
 
-class UnexpectedResponseOperations:
+class UnexpectedResponseHealth:
     """Answers health like a server that is not Git Manager."""
 
-    async def health(self) -> HealthStatus:
+    async def status(self) -> HealthStatus:
         raise ApiResponseError("unexpected response from http://127.0.0.1:8765/healthz")
 
 
 def test_doctor_reports_an_unexpected_response_as_one_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    app = build_app(
-        connect=RecordingConnector(UnexpectedResponseOperations()), version=TEST_VERSION
+    reason = "not built in this test"
+    operations = Service(
+        health=UnexpectedResponseHealth(),
+        config=UnavailableConfig(reason),
+        branches=UnavailableBranches(reason),
+        runs=UnavailableRuns(reason),
     )
+    app = build_app(connect=RecordingConnector(operations), version=TEST_VERSION)
 
     status = run_cli(app, ["doctor", "--socket", str(tmp_path / "api.sock")])
 

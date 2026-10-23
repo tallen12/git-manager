@@ -9,10 +9,8 @@ from cyclopts import App, CycloptsError, Parameter
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
+from git_manager.cli import health, server
 from git_manager.core import (
-    ApiError,
-    ApiResponseError,
-    ApiUnreachableError,
     Connector,
     HttpTarget,
     LocalTarget,
@@ -21,11 +19,14 @@ from git_manager.core import (
     SocketTarget,
     build_connector,
 )
-from git_manager.health import StaticHealthReporter
+from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.health import HealthService, StaticHealthReporter
 from git_manager.metadata import package_version
 
 # Exit status for invalid settings, matching cyclopts' own usage errors.
 _USAGE_ERROR = 2
+# Replaced domain by domain as M1 lands; see design-docs/feature-plan.md.
+_NOT_BUILT_YET = "not implemented yet"
 # The token has no flag, so its errors keep the ``target.token`` path.
 _TARGET_FLAGS = frozenset(
     {*LocalTarget.model_fields, *HttpTarget.model_fields, *SocketTarget.model_fields} - {"token"}
@@ -72,36 +73,9 @@ def build_app(*, connect: Connector, version: str) -> App:
     validated ``Settings``; ``connect`` opens the operations for its target.
     """
     app = App(name="git-manager", help="Keep git branches rebased.", version=version)
-
-    @app.command
-    async def doctor(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
-        """Print the health status as JSON, in local or API mode."""
-        async with connect(settings.target) as operations:
-            try:
-                status = await operations.health()
-            except (ApiError, ApiResponseError, ApiUnreachableError) as error:
-                print(f"error: {error}", file=sys.stderr)
-                sys.exit(1)
-        print(status.model_dump_json())
-
-    @app.command
-    async def serve(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
-        """Start the daemon's REST server on --http.host and --http.port."""
-        from git_manager.web.app import serve as serve_rest
-
-        await serve_rest(
-            connect=connect, target=settings.target, http=settings.http, version=version
-        )
-
-    mcp = App(name="mcp", help="MCP interface.")
-    app.command(mcp)
-
-    @mcp.command
-    async def stdio(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
-        """Serve MCP over stdio, in-process (local mode) or bridged to a daemon (API mode)."""
-        from git_manager.mcp.server import serve_stdio
-
-        await serve_stdio(connect=connect, target=settings.target, mcp=settings.mcp)
+    # One module per domain registers that domain's commands.
+    health.register(app, connect=connect)
+    server.register(app, connect=connect, version=version)
 
     @app.meta.default
     async def launch(
@@ -132,7 +106,12 @@ def run(app: App, tokens: Sequence[str] | None = None) -> None:
 def main() -> None:
     """Wire concrete implementations and run the CLI."""
     version = package_version()
-    service = Service(reporter=StaticHealthReporter(version=version))
+    service = Service(
+        health=HealthService(reporter=StaticHealthReporter(version=version)),
+        config=UnavailableConfig(_NOT_BUILT_YET),
+        branches=UnavailableBranches(_NOT_BUILT_YET),
+        runs=UnavailableRuns(_NOT_BUILT_YET),
+    )
     # Local mode will load the target's config file once config lands (M1).
     connect = build_connector(local=lambda _target: service)
     run(build_app(connect=connect, version=version))
