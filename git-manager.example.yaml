@@ -8,6 +8,8 @@ target:
   # url: http://127.0.0.1:8765   # API mode over HTTP; the token comes from
   #                              # GM_TARGET__TOKEN or /run/secrets/gm_target__token
   # socket: /run/git-manager/api.sock   # API mode over the daemon's Unix socket
+  # plain_http: loopback        # http:// only to loopback hosts; `allowed` sends the
+  #                              # token unencrypted to any host
 
 # Where `git-manager serve` listens.
 http:

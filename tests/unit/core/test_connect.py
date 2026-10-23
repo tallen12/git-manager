@@ -29,7 +29,7 @@ async def test_local_target_uses_the_local_factory(service: Operations, tmp_path
 
 
 async def test_http_target_opens_api_client(service: Operations) -> None:
-    target = HttpTarget(url="http://gm.test", token=SecretStr("token"))
+    target = HttpTarget(url="https://gm.test", token=SecretStr("token"))
 
     async with build_connector(local=lambda _target: service)(target) as operations:
         assert isinstance(operations, HttpOperations)

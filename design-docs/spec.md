@@ -432,7 +432,7 @@ One service layer (`git_manager.core.Service`) backs all three interfaces, so RE
 
   Nested values merge across sources, so a file can set `http.host` while a flag sets `--http.port`. The target is the exception: the highest source that names one (`config`, `url` or `socket`) supplies it, and lower sources' target options are dropped, so `--socket` replaces a `url` from `git-manager.yaml` instead of failing as two targets. Other target values, like the token, still merge from any source.
 - **Flags on every command.** The CLI takes `Settings` as a flattened cyclopts parameter on its meta app, so `--config`, `--url` and `--socket` (the target's fields) and the dotted section flags (`--http.host`, `--http.port`, `--mcp.name`, `--mcp.path`) apply to every command, before or after the command name. The token is a `SecretStr`, never printed or logged, and has no flag. `serve` and `config validate` read the same target, so one `GM_TARGET__CONFIG` serves every command; the image sets it to `/etc/git-manager/config.yaml` and `GM_HTTP__HOST` to `0.0.0.0`.
-- **The target is a sum type.** `target` is `LocalTarget | HttpTarget | SocketTarget`, discriminated by the one option that identifies each variant (`config`, `url` or `socket`), so there is no `kind` option. Pydantic rejects none, several within one source, a URL without a token, and options that belong to another variant, so a command never runs against the wrong target. A token is dropped unless the target is a URL, so one secrets directory serves every mode. With no target, the error says how to configure one. The composition root opens `Service` or `HttpOperations` with a `match` on the target.
+- **The target is a sum type.** `target` is `LocalTarget | HttpTarget | SocketTarget`, discriminated by the one option that identifies each variant (`config`, `url` or `socket`), so there is no `kind` option. Pydantic rejects none, several within one source, a URL without a token, and options that belong to another variant, so a command never runs against the wrong target. The token and `plain_http` are dropped unless the target is a URL, so one secrets directory serves every mode. An `http://` URL is accepted only for a loopback host (`localhost`, `127.0.0.0/8`, `::1`), because the token would otherwise cross the network unencrypted; `--plain-http allowed` (`GM_TARGET__PLAIN_HTTP`) lifts that for networks the operator trusts, such as a compose network. With no target, the error says how to configure one. The composition root opens `Service` or `HttpOperations` with a `match` on the target.
 
 ```python
 # core/targets.py: every variant is frozen with extra="forbid"
@@ -442,6 +442,7 @@ class LocalTarget(BaseModel):
 class HttpTarget(BaseModel):
     url: HttpUrlStr                      # --url / GM_TARGET__URL
     token: SecretStr                     # GM_TARGET__TOKEN or secrets/gm_target__token; no flag
+    plain_http: PlainHttp = LOOPBACK     # --plain-http / GM_TARGET__PLAIN_HTTP: loopback | allowed
 
 class SocketTarget(BaseModel):
     socket: Path                         # --socket / GM_TARGET__SOCKET

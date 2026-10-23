@@ -4,9 +4,12 @@ The cyclopts ``Parameter`` annotations only shape the CLI flags; pydantic ignore
 REST and MCP startup read the same models without the CLI.
 """
 
+from enum import StrEnum
+from ipaddress import ip_address
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Self, assert_never
 
+import httpx
 from cyclopts import Parameter
 from pydantic import (
     AfterValidator,
@@ -40,6 +43,22 @@ def _check_http_url(value: str) -> str:
 HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
 
 
+class PlainHttp(StrEnum):
+    """Where an ``http://`` URL may carry the API token unencrypted."""
+
+    LOOPBACK = "loopback"
+    ALLOWED = "allowed"
+
+
+def _is_loopback(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class LocalTarget(BaseModel):
     """Run operations in-process against a config file (local mode)."""
 
@@ -59,6 +78,13 @@ class HttpTarget(BaseModel):
     # No flag, so the token never lands in shell history: it comes from GM_TARGET__TOKEN,
     # .env, the settings file or a ``gm_target__token`` file in the secrets directory.
     token: Annotated[SecretStr, Parameter(parse=False)]
+    plain_http: PlainHttp = Field(
+        default=PlainHttp.LOOPBACK,
+        description=(
+            "Where an http:// --url may send the token: loopback hosts only, or allowed "
+            "anywhere. [env: GM_TARGET__PLAIN_HTTP]"
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -70,6 +96,23 @@ class HttpTarget(BaseModel):
             )
             raise ValueError(msg)
         return data
+
+    @model_validator(mode="after")
+    def _protect_token(self) -> Self:
+        match self.plain_http:
+            case PlainHttp.ALLOWED:
+                return self
+            case PlainHttp.LOOPBACK:
+                url = httpx.URL(self.url)
+                if url.scheme == "http" and not _is_loopback(url.host):
+                    msg = (
+                        f"--url {self.url} would send the token unencrypted: use https, a "
+                        "loopback host, or --plain-http allowed"
+                    )
+                    raise ValueError(msg)
+                return self
+            case _:
+                assert_never(self.plain_http)
 
 
 class SocketTarget(BaseModel):
@@ -87,6 +130,9 @@ class SocketTarget(BaseModel):
 _TARGET_TAGS = {"config": "local", "url": "http", "socket": "socket"}
 # The options that name a target; any one of them chooses the variant.
 TARGET_OPTIONS = frozenset(_TARGET_TAGS)
+# Options that only mean something next to a URL. One environment or secrets directory
+# serves every mode, so a local or socket target ignores them.
+HTTP_ONLY_OPTIONS = frozenset({"token", "plain_http"})
 NO_TARGET = (
     "no target: pass --config (local mode), or --url with a token, or --socket (API mode); "
     "or set target in git-manager.yaml or the GM_TARGET__* variables"

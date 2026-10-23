@@ -81,7 +81,7 @@ def test_nested_values_merge_across_sources(
 def test_token_is_read_from_the_secrets_directory(secrets_dir: Path) -> None:
     write(secrets_dir / "gm_target__token", "file-token\n")
 
-    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+    target = Settings.model_validate({"target": {"url": "https://gm.test"}}).target
 
     assert isinstance(target, HttpTarget)
     assert target.token.get_secret_value() == "file-token"
@@ -92,7 +92,7 @@ def test_token_from_environment_and_url_from_a_flag_merge(
 ) -> None:
     monkeypatch.setenv("GM_TARGET__TOKEN", "env-token")
 
-    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+    target = Settings.model_validate({"target": {"url": "https://gm.test"}}).target
 
     assert isinstance(target, HttpTarget)
     assert target.token.get_secret_value() == "env-token"
@@ -110,10 +110,29 @@ def test_local_and_socket_targets_ignore_a_token(
     assert socket == SocketTarget(socket=tmp_path / "api.sock")
 
 
+def test_local_and_socket_targets_ignore_the_plain_http_policy(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GM_TARGET__PLAIN_HTTP", "allowed")
+
+    target = Settings.model_validate({"target": {"config": config_file}}).target
+
+    assert target == LocalTarget(config=config_file)
+
+
+def test_plain_http_policy_from_settings_file_joins_a_url_flag() -> None:
+    write(Path("git-manager.yaml"), "target:\n  token: t\n  plain_http: allowed\n")
+
+    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+
+    assert isinstance(target, HttpTarget)
+    assert target.url == "http://gm.test"
+
+
 def test_flag_target_replaces_a_variable_target(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GM_TARGET__URL", "http://gm.test")
+    monkeypatch.setenv("GM_TARGET__URL", "https://gm.test")
 
     target = Settings.model_validate({"target": {"config": config_file}}).target
 
@@ -121,7 +140,7 @@ def test_flag_target_replaces_a_variable_target(
 
 
 def test_flag_target_replaces_a_settings_file_target(tmp_path: Path) -> None:
-    write(Path("git-manager.yaml"), "target:\n  url: http://gm.test\n  token: t\n")
+    write(Path("git-manager.yaml"), "target:\n  url: https://gm.test\n  token: t\n")
 
     target = Settings.model_validate({"target": {"socket": tmp_path / "api.sock"}}).target
 
@@ -131,7 +150,7 @@ def test_flag_target_replaces_a_settings_file_target(tmp_path: Path) -> None:
 def test_variable_target_replaces_a_settings_file_target(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    write(Path("git-manager.yaml"), "target:\n  url: http://gm.test\n")
+    write(Path("git-manager.yaml"), "target:\n  url: https://gm.test\n")
     monkeypatch.setenv("GM_TARGET__CONFIG", str(config_file))
 
     assert Settings().target == LocalTarget(config=config_file)
@@ -140,14 +159,14 @@ def test_variable_target_replaces_a_settings_file_target(
 def test_token_from_settings_file_joins_a_url_flag() -> None:
     write(Path("git-manager.yaml"), "target:\n  socket: api.sock\n  token: file-token\n")
 
-    target = Settings.model_validate({"target": {"url": "http://gm.test"}}).target
+    target = Settings.model_validate({"target": {"url": "https://gm.test"}}).target
 
     assert isinstance(target, HttpTarget)
     assert target.token.get_secret_value() == "file-token"
 
 
 def test_two_targets_in_one_source_still_fail(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GM_TARGET__URL", "http://gm.test")
+    monkeypatch.setenv("GM_TARGET__URL", "https://gm.test")
     monkeypatch.setenv("GM_TARGET__SOCKET", "api.sock")
 
     with pytest.raises(ValidationError, match="choose one target"):

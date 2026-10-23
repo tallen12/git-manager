@@ -25,7 +25,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from git_manager.core.targets import NO_TARGET, TARGET_OPTIONS, Target
+from git_manager.core.targets import HTTP_ONLY_OPTIONS, NO_TARGET, TARGET_OPTIONS, Target
 from git_manager.mcp.settings import McpSettings
 from git_manager.web.settings import HttpSettings
 
@@ -123,11 +123,9 @@ class Settings(BaseSettings):
             raise ValueError(NO_TARGET)
         if not isinstance(target, dict):
             return data
-        # One secrets directory or environment serves every mode: a token only means
-        # something next to a URL, so a local or socket target ignores it.
-        if target.get("url") is None and "token" in target:
-            target = {key: value for key, value in target.items() if key != "token"}
-        if not any(target.get(key) is not None for key in ("config", "url", "socket")):
+        if target.get("url") is None:
+            target = {key: value for key, value in target.items() if key not in HTTP_ONLY_OPTIONS}
+        if not any(target.get(key) is not None for key in TARGET_OPTIONS):
             raise ValueError(NO_TARGET)
         return {**data, "target": target}
 
