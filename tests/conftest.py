@@ -1,0 +1,26 @@
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from git_manager.health import HealthReporter, StaticHealthReporter
+
+TEST_VERSION = "0.0.0-test"
+
+
+@pytest.fixture
+def reporter() -> HealthReporter:
+    return StaticHealthReporter(version=TEST_VERSION)
+
+
+@pytest.fixture
+def repository(tmp_path: Path) -> Path:
+    """An empty git repository with a deterministic identity and no signing."""
+    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], check=True, capture_output=True)
+    for key, value in (
+        ("user.name", "Test User"),
+        ("user.email", "test@example.com"),
+        ("commit.gpgsign", "false"),
+    ):
+        subprocess.run(["git", "-C", str(tmp_path), "config", key, value], check=True)
+    return tmp_path
