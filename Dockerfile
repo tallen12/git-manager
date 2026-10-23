@@ -10,7 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git openssh-cli
     && groupadd --gid "$APP_GID" gm \
     && useradd --create-home --uid "$APP_UID" --gid "$APP_GID" gm
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+# Dependencies first, so source edits reuse the cached dependency layer.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
+COPY README.md ./
 COPY src ./src
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
