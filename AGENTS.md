@@ -23,6 +23,7 @@ global interpreter.
 - Format: `just format`
 - Lint: `just lint`
 - Type check: `just typecheck`
+- Test layout and skills link: `just layout`
 - Test: `just test`
 - Test coverage: `just coverage`
 - All required checks: `just check`
@@ -117,6 +118,14 @@ Development happens on macOS and Linux; Git Manager itself runs in a Linux conta
 
 ## Tests
 
+- Tests mirror `src/git_manager/`, split by type: the tests for
+  `src/git_manager/<path>/<name>.py` are `tests/unit/<path>/test_<name>.py` and, when
+  needed, `tests/integration/<path>/test_<name>.py`. Every module except `__init__.py`
+  needs a unit test. Tests of shared fixtures in `tests/conftest.py` are
+  `tests/<type>/test_conftest.py`. Every test directory has an `__init__.py`.
+  `scripts/check_layout.py` (`just layout`) enforces this.
+- Unit tests run in process with fakes and in-memory transports. Integration tests cross a
+  real boundary: git repositories, sockets, or an adapter talking to another adapter.
 - Test observable behavior and protocol contracts: state transitions, failures, recovery.
 - Use realistic fakes over mocks tied to implementation details. Git tests use throwaway
   repositories (see the `repository` fixture), never the network.

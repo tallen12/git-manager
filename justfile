@@ -19,6 +19,10 @@ lint:
 typecheck:
     uv run ty check
 
+# Check that tests mirror src/git_manager/ and the skills link is intact.
+layout:
+    uv run python scripts/check_layout.py
+
 # Run the test suite.
 test:
     uv run pytest
@@ -28,7 +32,7 @@ coverage:
     uv run pytest --cov --cov-report=term --cov-report=xml
 
 # Run all required checks.
-check: lint typecheck test
+check: lint typecheck layout test
 
 # Run the CLI (pass arguments after the recipe name).
 cli *args:

@@ -3,11 +3,21 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from cyclopts import App
 
 from git_manager.core import Operations, Service
 from git_manager.health import HealthReporter, StaticHealthReporter
 
 TEST_VERSION = "0.0.0-test"
+
+
+def run_cli(app: App, tokens: list[str]) -> int:
+    """Run the CLI and return its exit status."""
+    try:
+        app(tokens)
+    except SystemExit as exit_:
+        return exit_.code if isinstance(exit_.code, int) else 0
+    return 0
 
 
 @pytest.fixture(autouse=True)

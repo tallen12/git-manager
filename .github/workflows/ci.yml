@@ -29,6 +29,8 @@ jobs:
             recipe: lint
           - name: Type check
             recipe: typecheck
+          - name: Layout
+            recipe: layout
           # Coverage runs the full suite, so a separate `just test` job would repeat it.
           - name: Tests
             recipe: coverage
