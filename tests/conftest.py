@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 from cyclopts import App
+from pydantic import SecretStr
 
+from git_manager.approvals import ApiToken, Scope, TokenAuthenticator, TokensFile
 from git_manager.branches import BranchHeads, BranchState, TrackedBranch
 from git_manager.cli.main import run
 from git_manager.config import VerifyConfig
@@ -29,6 +31,9 @@ from git_manager.runtime import Command, ProcessCompleted, ProcessResult
 from git_manager.verification import VerifyCommands, VerifyOutcome, VerifyPassed
 
 TEST_VERSION = "0.0.0-test"
+# Accepted by ``authenticator`` with every scope; send it with ``AUTH_HEADERS``.
+TEST_TOKEN = "test-token-0123456789abcdef0123456789"
+AUTH_HEADERS = {"Authorization": f"Bearer {TEST_TOKEN}"}
 START = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
 
 
@@ -351,6 +356,13 @@ def isolated_settings(
         monkeypatch.delenv(name)
     monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
     monkeypatch.setenv("GM_SECRETS_DIR", str(tmp_path_factory.mktemp("secrets")))
+
+
+@pytest.fixture
+def authenticator() -> TokenAuthenticator:
+    """Accepts ``TEST_TOKEN`` as ``operator`` with every scope."""
+    entry = ApiToken(name="operator", token=SecretStr(TEST_TOKEN), scopes=frozenset(Scope))
+    return TokenAuthenticator(TokensFile(tokens=(entry,)))
 
 
 @pytest.fixture

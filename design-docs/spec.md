@@ -475,6 +475,8 @@ Target = Annotated[
 class HttpSettings(BaseModel):
     host: str = "127.0.0.1"              # --http.host / GM_HTTP__HOST
     port: int = 8765                     # --http.port / GM_HTTP__PORT
+    tokens_file: Path | None = None      # GM_HTTP__TOKENS_FILE; serve needs it
+    socket: Path | None = None           # GM_HTTP__SOCKET; the image sets /run/git-manager/api.sock
 
 class McpSettings(BaseModel):
     name: str = "git-manager"            # --mcp.name / GM_MCP__NAME
@@ -488,7 +490,9 @@ class Settings(BaseSettings):
     mcp: McpSettings = McpSettings()
 ```
 
-`HttpUrlStr` is a `str` checked as an `HttpUrl`: cyclopts cannot inspect pydantic's URL class. The server's socket and `tokens_file` join `HttpSettings` with authentication in M2.
+`HttpUrlStr` is a `str` checked as an `HttpUrl`: cyclopts cannot inspect pydantic's URL class.
+
+**Authentication.** `serve` refuses to start without `http.tokens_file`, a YAML file of named tokens (`tokens: [{name, token, scopes}]`), each at least 32 characters with at least one scope. Scopes are independent: a token lists every scope it has (a human's usually `[read, operate, approve]`, an MCP client's `[read, operate]`), and none implies another. Names and values must be unique. The file is a secret (the `gm_tokens` compose secret, `GM_HTTP__TOKENS_FILE=/run/secrets/gm_tokens` in the image), read once at startup; errors about it name the field, never a token. Tokens are compared in constant time. Every API route declares the scope it needs, `GET /healthz` included (`read`); a request without a valid bearer token gets `401` with `WWW-Authenticate: Bearer`, one whose token lacks the scope gets `403` naming the token and scope. The OpenAPI document and `/docs` stay open: they describe the API but do nothing. With `http.socket` set, the daemon also serves REST on that Unix socket, mode `0660` with its directory's group (`gm-admin` for `/run/git-manager`), set before listening; requests over it need no token and have every scope, since the file mode already decided who may connect. A socket left by a crashed daemon is replaced, and the socket is removed on shutdown.
 
 - **One writer at a time.** The data directory holds an exclusive lock while a daemon or a local-mode command uses it. A local-mode command that finds the lock held exits with an error naming the API mode to use instead, so the CLI never becomes a second writer next to a running daemon.
 - **Local mode runs to completion.** There is no poller: `sync` runs the rebase, verification and any Claude resolution in the foreground and prints the result; scheduled cadence needs `serve`. Approvals, failures and sessions are stored in the same SQLite state, so a run started locally can be approved later in either mode.
@@ -538,7 +542,7 @@ Configuration is a hand-editable YAML file whose every field has a default, so a
 ```yaml
 # /etc/git-manager/config.yaml  (one repo per container)
 # Where the server listens is a setting, not repo config: see Interfaces (http section of
-# git-manager.yaml or GM_HTTP__*). The planned server socket and tokens_file move there in M2.
+# git-manager.yaml or GM_HTTP__*), as are its tokens file and Unix socket.
 repo:
   url: git@github.com:prxengage/trialport-api.git
   credential: /run/secrets/deploy_key

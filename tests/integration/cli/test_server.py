@@ -6,8 +6,9 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
 
 import httpx
@@ -15,12 +16,14 @@ import pytest
 from cyclopts import App
 
 from git_manager.cli.main import build_app, local_connector, local_runtime
+from git_manager.cli.output import EXIT_FAILED
 from git_manager.config import CheckoutRepoConfig, YamlConfigFile
 from git_manager.events import Event, EventKind
 from git_manager.store import DataDirectoryLockedError, FileDataDirectoryLock
 from git_manager.store.database import open_database, state_db_path
 from git_manager.store.repositories import SqlEventRepository
-from tests.conftest import TEST_VERSION, run_cli
+from git_manager.web.app import NO_TOKENS_FILE
+from tests.conftest import AUTH_HEADERS, TEST_TOKEN, TEST_VERSION, run_cli
 from tests.integration.rebasing.conftest import Remote, commit, git
 
 # The installed ``git-manager`` script, run by the test's interpreter.
@@ -47,11 +50,22 @@ def eventually(check: Callable[[], bool]) -> None:
     raise AssertionError(msg)
 
 
-def healthy(port: int) -> bool:
+def health_status(port: int, headers: dict[str, str]) -> int | None:
     try:
-        return httpx.get(f"http://127.0.0.1:{port}/healthz").status_code == httpx.codes.OK
+        return httpx.get(f"http://127.0.0.1:{port}/healthz", headers=headers).status_code
     except httpx.ConnectError:
-        return False
+        return None
+
+
+def healthy(port: int) -> bool:
+    return health_status(port, AUTH_HEADERS) == httpx.codes.OK
+
+
+def healthy_over_socket(path: Path) -> bool:
+    """Whether the daemon answers over its socket without a token."""
+    transport = httpx.HTTPTransport(uds=str(path))
+    with httpx.Client(transport=transport, base_url="http://git-manager") as client:
+        return client.get("/healthz").status_code == httpx.codes.OK
 
 
 def locked(data_dir: Path) -> bool:
@@ -82,6 +96,23 @@ def config_file(remote: Remote, tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def tokens_file(tmp_path: Path) -> Path:
+    path = tmp_path / "tokens.yaml"
+    path.write_text(
+        f"tokens:\n  - name: operator\n    token: {TEST_TOKEN}\n    scopes: [read]\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def api_socket() -> Generator[Path]:
+    # Unix socket paths are limited to about 100 bytes; pytest's tmp_path can be longer.
+    with tempfile.TemporaryDirectory(prefix="gm-") as directory:
+        yield Path(directory) / "api.sock"
+
+
+@pytest.fixture
 def app() -> App:
     environ = dict(os.environ)
     repo_config = CheckoutRepoConfig()
@@ -101,6 +132,8 @@ def test_serve_rebases_a_base_change_and_stops_on_sigterm(
     app: App,
     remote: Remote,
     config_file: Path,
+    tokens_file: Path,
+    api_socket: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -111,13 +144,19 @@ def test_serve_rebases_a_base_change_and_stops_on_sigterm(
     port = free_port()
     daemon = subprocess.Popen(
         [*ENTRY_POINT, "serve", "--config", str(config_file), "--http.port", str(port)],
-        env=dict(os.environ),
+        env={
+            **os.environ,
+            "GM_HTTP__TOKENS_FILE": str(tokens_file),
+            "GM_HTTP__SOCKET": str(api_socket),
+        },
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
     try:
         eventually(lambda: healthy(port))
+        assert health_status(port, {}) == httpx.codes.UNAUTHORIZED
+        assert healthy_over_socket(api_socket)
         assert locked(data_dir)
 
         new_base = commit(remote.teammate, "other.txt", "base work\n", "main moves")
@@ -135,6 +174,7 @@ def test_serve_rebases_a_base_change_and_stops_on_sigterm(
 
     assert daemon.returncode == 0, output
     assert not locked(data_dir)
+    assert not api_socket.exists()
     assert not list((data_dir / "worktrees").glob("*"))
     # Polls after the run saw the daemon's own push, which is not reported as a human's.
     kinds = [event.kind for event in asyncio.run(stored_events(data_dir))]
@@ -143,3 +183,13 @@ def test_serve_rebases_a_base_change_and_stops_on_sigterm(
     capsys.readouterr()
     assert run_cli(app, ["status", "--config", str(config_file)]) == 0
     assert capsys.readouterr().out.splitlines()[2].split()[:3] == ["feature/one", "main", "idle"]
+
+
+def test_serve_without_a_tokens_file_fails_and_releases_the_data_directory(
+    app: App, config_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    status = run_cli(app, ["serve", "--config", str(config_file)])
+
+    assert status == EXIT_FAILED
+    assert capsys.readouterr().err == f"error: {NO_TOKENS_FILE}\n"
+    assert not locked(tmp_path / "data")

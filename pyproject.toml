@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-settings[yaml]>=2.16.1",
     "ruamel-yaml>=0.19.1",
     "sqlmodel>=0.0.48",
+    "sse-starlette>=3.5.0",
     "uvicorn>=0.54.0",
 ]
 

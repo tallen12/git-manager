@@ -2,7 +2,8 @@
 # "Tests that need Docker" and the Security checklist in design-docs/spec.md).
 #
 # Before `docker compose up`, put the repo config in ./config.yaml and the secrets in
-# ./secrets/ (deploy_key, claude_oauth_token).
+# ./secrets/ (deploy_key, claude_oauth_token, and gm_tokens: the API tokens and their
+# scopes, see git-manager.example.yaml).
 name: git-manager
 
 services:
@@ -54,7 +55,7 @@ services:
         volume:
           subpath: client
       - ./config.yaml:/etc/git-manager/config.yaml:ro
-    secrets: [deploy_key, claude_oauth_token]
+    secrets: [deploy_key, claude_oauth_token, gm_tokens]
     restart: unless-stopped
     # On stop the daemon lets the current run finish (verify.timeout defaults to 30m per
     # command); only a run still going after this is killed. See Shutdown in the spec.
@@ -65,6 +66,8 @@ secrets:
     file: ./secrets/deploy_key
   claude_oauth_token:
     file: ./secrets/claude_oauth_token
+  gm_tokens:
+    file: ./secrets/gm_tokens
 
 volumes:
   gm-data: {}

@@ -8,13 +8,11 @@ from datetime import timedelta
 from types import FrameType
 from typing import Protocol
 
-import uvicorn
-
 from git_manager.branches.daemon import DEFAULT_TICK, AsyncioSleeper, Daemon
 from git_manager.branches.poller import Poller
 from git_manager.branches.queue import FifoRunQueue
 from git_manager.core.compose import LocalRuntime
-from git_manager.web.app import create_app
+from git_manager.web.app import rest_servers
 from git_manager.web.settings import HttpSettings
 
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
@@ -66,23 +64,27 @@ def stop_on_signals(
             signal.signal(number, handler)
 
 
-async def run_until_stopped(daemon: Stoppable, server: Server) -> None:
-    """Run both until either ends; then stop the other and wait for it.
+async def run_until_stopped(daemon: Stoppable, servers: Sequence[Server]) -> None:
+    """Run the daemon and every server until any ends; then stop the rest and wait.
 
-    A stop signal ends the server first (uvicorn handles it); the daemon then finishes its
-    current run. A daemon that fails takes the server down with it. The first error is
-    raised once both have ended.
+    A stop signal ends the servers first (uvicorn handles it); the daemon then finishes its
+    current run. A daemon that fails takes the servers down with it. The first error is
+    raised once all have ended.
     """
     with stop_on_signals(daemon.stop):
         tasks = [
             asyncio.create_task(daemon.run(), name="git-manager-daemon"),
-            asyncio.create_task(server.serve(), name="git-manager-rest"),
+            *(
+                asyncio.create_task(server.serve(), name=f"git-manager-rest-{index}")
+                for index, server in enumerate(servers)
+            ),
         ]
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
             daemon.stop()
-            server.should_exit = True
+            for server in servers:
+                server.should_exit = True
             await asyncio.wait(tasks)
         for task in tasks:
             if (error := task.exception()) is not None:
@@ -95,7 +97,8 @@ async def serve_daemon(
     """Serve REST for ``runtime`` and poll and run its branches until a stop signal.
 
     ``open_local`` holds the data-directory lock around this call, so the lock is released
-    only after the last run has finished.
+    only after the last run has finished. Raises ``TokensFileError``, before polling or
+    serving, when ``http`` has no valid tokens file.
     """
     queue = FifoRunQueue(clock=runtime.clock)
     poller = Poller(
@@ -114,7 +117,5 @@ async def serve_daemon(
         sleeper=AsyncioSleeper(),
         tick=tick,
     )
-    config = uvicorn.Config(
-        create_app(operations=runtime.service, version=version), host=http.host, port=http.port
-    )
-    await run_until_stopped(daemon, uvicorn.Server(config))
+    with rest_servers(operations=runtime.service, http=http, version=version) as servers:
+        await run_until_stopped(daemon, servers)

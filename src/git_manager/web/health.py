@@ -4,17 +4,19 @@ from dataclasses import dataclass
 
 from fastapi import APIRouter
 
+from git_manager.approvals import Scope
 from git_manager.health import HealthOperations, HealthStatus
 from git_manager.web.api_client import ApiClient
+from git_manager.web.auth import Access
 
 HEALTH_PATH = "/healthz"
 
 
-def health_router(operations: HealthOperations) -> APIRouter:
+def health_router(operations: HealthOperations, *, access: Access) -> APIRouter:
     """Routes for ``HealthOperations``."""
     router = APIRouter()
 
-    @router.get(HEALTH_PATH)
+    @router.get(HEALTH_PATH, dependencies=[access.requires(Scope.READ)])
     async def healthz() -> HealthStatus:
         return await operations.status()
 
