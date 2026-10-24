@@ -10,6 +10,7 @@ from git_manager.config.models import ApprovalPolicy, BranchOptions, RepoConfig,
 from git_manager.errors import NotFoundError
 from git_manager.events import EventKind
 from git_manager.rebasing import (
+    BranchOnHoldError,
     PushOutcome,
     RebaseCompleted,
     RebaseStopped,
@@ -411,4 +412,42 @@ async def test_a_run_waits_for_the_branch_lock(harness: Harness) -> None:
         assert harness.runs.rows == {}
 
     run = await task
+    assert run.outcome is BranchState.IDLE
+
+
+@pytest.mark.parametrize(
+    ("state", "trigger"),
+    [
+        (BranchState.PAUSED, RunTrigger.POLL),
+        (BranchState.PAUSED, RunTrigger.MANUAL),
+        (BranchState.NEEDS_HUMAN, RunTrigger.POLL),
+        (BranchState.DIVERGED_REMOTE, RunTrigger.POLL),
+    ],
+)
+async def test_a_held_branch_starts_no_run(
+    harness: Harness, state: BranchState, trigger: RunTrigger
+) -> None:
+    branch = harness.branches.rows["branch-1"]
+    harness.branches.rows[branch.id] = branch.model_copy(update={"state": state})
+
+    with pytest.raises(BranchOnHoldError, match=f"it is {state}"):
+        await harness.runner.run(branch.id, trigger=trigger, config=repo_config(harness.data_dir))
+
+    assert harness.runs.rows == {}
+    assert harness.git.fetched == []
+    assert harness.events.events == []
+    assert harness.branches.rows[branch.id].state is state
+
+
+async def test_a_manual_sync_starts_from_needs_human(harness: Harness) -> None:
+    branch = harness.branches.rows["branch-1"]
+    harness.branches.rows[branch.id] = branch.model_copy(
+        update={"state": BranchState.NEEDS_HUMAN, "reason": Reason.CONFLICT}
+    )
+    harness.git.rebase_outcomes.append(RebaseCompleted(head=REBASED))
+
+    run = await harness.runner.run(
+        branch.id, trigger=RunTrigger.MANUAL, config=repo_config(harness.data_dir)
+    )
+
     assert run.outcome is BranchState.IDLE

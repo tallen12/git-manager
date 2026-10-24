@@ -19,6 +19,7 @@ from git_manager.branches.cadence import DetectOnly, RunAt, cadence_decision
 from git_manager.branches.models import BranchState, CommitSha, Reason, TrackedBranch
 from git_manager.config.models import CadenceConfig
 from git_manager.events.models import EventDraft, EventKind
+from git_manager.rebasing.models import RunTrigger
 
 # A run owns the branch: polling only reports what moved.
 ACTIVE_STATES = frozenset(
@@ -45,6 +46,24 @@ HOLD_STATES = frozenset(
         BranchState.WAITING_QUOTA,
     }
 )
+
+
+def may_start(state: BranchState, trigger: RunTrigger) -> bool:
+    """Whether a run with ``trigger`` may start on a branch in ``state``.
+
+    A branch can enter a hold state while its run waits in the queue (a human pauses it,
+    or another run stopped it), so the runner asks again once it holds the branch lock.
+    A poll never starts a run on a held branch; a human action (``sync``, ``retry``,
+    ``retarget``) is how a branch leaves most hold states, so only ``paused`` blocks it.
+    """
+    match trigger:
+        case RunTrigger.POLL:
+            return state not in HOLD_STATES
+        case RunTrigger.MANUAL | RunTrigger.RETRY | RunTrigger.RETARGET:
+            return state is not BranchState.PAUSED
+        case _:
+            assert_never(trigger)
+
 
 # States the poller moves between: a base change may (re)schedule a run from here.
 READY_STATES = frozenset(

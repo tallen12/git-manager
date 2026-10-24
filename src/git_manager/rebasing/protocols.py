@@ -84,8 +84,10 @@ class RunExecutor(Protocol):
 
         The run ends in a state of the sync lifecycle, or in ``awaiting_approval`` with
         ``finished_at`` unset until the approval completes it. Raises ``NotFoundError``
-        for an untracked branch and ``RemoteBranchMissingError`` when its base or itself
-        is gone from the remote. Any other error leaves the run and the branch in
+        for an untracked branch, ``BranchOnHoldError`` when the branch's state holds it
+        from a run with ``trigger`` (see ``branches.polling.may_start``) and
+        ``RemoteBranchMissingError`` when its base or itself is gone from the remote.
+        Any other error leaves the run and the branch in
         ``needs_human`` (no reason) and propagates.
         """
         ...

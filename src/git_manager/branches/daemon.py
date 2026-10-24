@@ -16,7 +16,7 @@ from git_manager.branches.protocols import BranchPoller, RunQueue, Sleeper
 from git_manager.config.errors import ConfigError
 from git_manager.config.protocols import ConfigOperations
 from git_manager.errors import NotFoundError
-from git_manager.rebasing.errors import GitError, RemoteBranchMissingError
+from git_manager.rebasing.errors import BranchOnHoldError, GitError, RemoteBranchMissingError
 from git_manager.rebasing.models import RunTrigger
 from git_manager.rebasing.protocols import RunExecutor
 from git_manager.store.protocols import BranchRepository
@@ -118,8 +118,9 @@ class Daemon:
         try:
             config = await self._config.show()
             run = await self._executor.run(branch_id, trigger=trigger, config=config)
-        except (NotFoundError, RemoteBranchMissingError) as error:
-            # Untracked while queued, or gone from the remote: the branch already says so.
+        except (NotFoundError, BranchOnHoldError, RemoteBranchMissingError) as error:
+            # Untracked or put on hold (paused, needs_human, ...) while queued, or gone from
+            # the remote: the branch already says so.
             self._logger.info("run of %s not started: %s", branch_id, error)
         except ConfigError as error:
             self._logger.warning("run of %s not started: %s", branch_id, error)

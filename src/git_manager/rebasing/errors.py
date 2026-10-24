@@ -2,6 +2,9 @@
 
 from collections.abc import Sequence
 
+from git_manager.branches.models import BranchState
+from git_manager.errors import ConflictError
+
 
 class GitError(Exception):
     """A git command failed in a way the caller did not expect."""
@@ -33,3 +36,15 @@ class RemoteBranchMissingError(Exception):
         super().__init__(f"cannot sync {branch}: {missing} is not on the remote")
         self.branch = branch
         self.missing = missing
+
+
+class BranchOnHoldError(ConflictError):
+    """A run could not start because its branch is in a state that holds it.
+
+    Nothing was changed and no run was recorded; see ``branches.polling.may_start``.
+    """
+
+    def __init__(self, *, branch: str, state: BranchState) -> None:
+        super().__init__(f"cannot run {branch}: it is {state}")
+        self.branch = branch
+        self.state = state

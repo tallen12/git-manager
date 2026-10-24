@@ -13,11 +13,13 @@ from git_manager.branches.polling import (
     Observation,
     QueueAction,
     Watch,
+    may_start,
     observe,
     poll_due,
 )
 from git_manager.config.models import CadenceConfig, CadenceMode
 from git_manager.events import EventKind
+from git_manager.rebasing.models import RunTrigger
 from tests.conftest import START, make_branch, sha
 
 # make_branch(): feature/one on main, last_base_sha sha(1), last_head_sha sha(2).
@@ -421,3 +423,19 @@ def test_human_push_after_own_push_is_a_head_move() -> None:
     )
 
     assert [event.data for event in observation.events] == [{"from": HEAD, "to": sha(9)}]
+
+
+@pytest.mark.parametrize("state", sorted(HOLD_STATES))
+def test_a_poll_never_starts_a_run_on_a_held_branch(state: BranchState) -> None:
+    assert not may_start(state, RunTrigger.POLL)
+
+
+@pytest.mark.parametrize("state", sorted(READY_STATES))
+def test_a_poll_starts_a_run_on_a_ready_branch(state: BranchState) -> None:
+    assert may_start(state, RunTrigger.POLL)
+
+
+@pytest.mark.parametrize("trigger", [RunTrigger.MANUAL, RunTrigger.RETRY, RunTrigger.RETARGET])
+def test_human_triggers_are_held_only_by_pause(trigger: RunTrigger) -> None:
+    assert not may_start(BranchState.PAUSED, trigger)
+    assert all(may_start(state, trigger) for state in HOLD_STATES - {BranchState.PAUSED})

@@ -1,4 +1,11 @@
-from git_manager.rebasing import GitError, GitOutputError, RemoteBranchMissingError
+from git_manager.branches import BranchState
+from git_manager.errors import ConflictError
+from git_manager.rebasing import (
+    BranchOnHoldError,
+    GitError,
+    GitOutputError,
+    RemoteBranchMissingError,
+)
 
 
 def test_git_error_names_the_command_and_its_stderr() -> None:
@@ -27,3 +34,10 @@ def test_remote_branch_missing_error_names_the_branch_and_what_is_gone() -> None
 
     assert str(error) == "cannot sync feature/one: main is not on the remote"
     assert (error.branch, error.missing) == ("feature/one", "main")
+
+
+def test_branch_on_hold_is_a_conflict_naming_the_state() -> None:
+    error = BranchOnHoldError(branch="feature/one", state=BranchState.PAUSED)
+
+    assert isinstance(error, ConflictError)
+    assert str(error) == "cannot run feature/one: it is paused"

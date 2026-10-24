@@ -336,3 +336,40 @@ async def test_human_push_after_own_push_is_reported(clock: FixedClock, tmp_path
 
 async def test_asyncio_sleeper_waits_on_the_event_loop() -> None:
     await asyncio.wait_for(AsyncioSleeper().sleep(timedelta(0)), timeout=1)
+
+
+async def test_a_branch_paused_while_queued_is_skipped(
+    clock: FixedClock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The real runner, so the check is the one made under the branch lock.
+    harness = make_harness(tmp_path / "data")
+    branch = harness.branches.rows["branch-1"]
+    queue = FifoRunQueue(clock=clock)
+    # Queued by a poll, then paused by a human before the worker reached it.
+    queue.put(branch.id, trigger=RunTrigger.POLL)
+    harness.branches.rows[branch.id] = branch.model_copy(update={"state": BranchState.PAUSED})
+    sleeper = FakeSleeper(clock)
+    daemon = Daemon(
+        poller=Poller(
+            git=harness.git,
+            branches=harness.branches,
+            events=harness.events,
+            queue=queue,
+            clock=clock,
+        ),
+        queue=queue,
+        executor=harness.runner,
+        config=StaticConfig(immediate(harness.data_dir)),
+        branches=harness.branches,
+        sleeper=sleeper,
+    )
+    task = asyncio.create_task(daemon.run())
+
+    with caplog.at_level(logging.INFO):
+        await wait_until(lambda: any("it is paused" in r.getMessage() for r in caplog.records))
+    daemon.stop()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert harness.runs.rows == {}
+    assert harness.git.fetched == []
+    assert harness.branches.rows[branch.id].state is BranchState.PAUSED
