@@ -5,18 +5,9 @@ from typing import Annotated, assert_never
 
 from cyclopts import App, Parameter
 
+from git_manager.cli.output import reported
 from git_manager.config import ConfigError, ConfigReader
-from git_manager.core import (
-    ApiError,
-    ApiResponseError,
-    ApiUnreachableError,
-    Connector,
-    HttpTarget,
-    LocalTarget,
-    OperationError,
-    Settings,
-    SocketTarget,
-)
+from git_manager.core import Connector, HttpTarget, LocalTarget, Settings, SocketTarget
 
 _NEEDS_FILE = "config validate checks a config file: pass --config PATH or set GM_TARGET__CONFIG"
 
@@ -29,12 +20,9 @@ def register(app: App, *, connect: Connector, read_config: ConfigReader) -> None
     @config.command
     async def show(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
         """Print the effective config as JSON, with defaults and overrides merged."""
-        async with connect(settings.target) as operations:
-            try:
+        with reported():
+            async with connect(settings.target) as operations:
                 effective = await operations.config.show()
-            except (ApiError, ApiResponseError, ApiUnreachableError, OperationError) as error:
-                print(f"error: {error}", file=sys.stderr)
-                sys.exit(1)
         print(effective.model_dump_json(indent=2))
 
     @config.command

@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ def test_doctor_reports_unreachable_daemon(
 ) -> None:
     app = build_app(
         read_config=read_config,
-        connect=build_connector(local=lambda _target: service),
+        connect=build_connector(local=lambda _target: nullcontext(service)),
         version=TEST_VERSION,
     )
 

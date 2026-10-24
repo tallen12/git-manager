@@ -1,4 +1,5 @@
 import json
+from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
 
 import pytest
@@ -20,13 +21,15 @@ CONFIG = "repo:\n  url: u\nbranches:\n  - name: a\n    base: main\n"
 def app(reporter: HealthReporter) -> App:
     """The CLI with in-process config operations over the target's file."""
 
-    def local(target: LocalTarget) -> Operations:
+    def local(target: LocalTarget) -> AbstractAsyncContextManager[Operations]:
         reason = "not built in this test"
-        return Service(
-            health=HealthService(reporter=reporter),
-            config=ConfigService(read_config(target.config)),
-            branches=UnavailableBranches(reason),
-            runs=UnavailableRuns(reason),
+        return nullcontext(
+            Service(
+                health=HealthService(reporter=reporter),
+                config=ConfigService(read_config(target.config)),
+                branches=UnavailableBranches(reason),
+                runs=UnavailableRuns(reason),
+            )
         )
 
     return build_app(
@@ -45,7 +48,9 @@ def test_register_adds_the_config_group(service: Operations) -> None:
     app = App(name="git-manager")
 
     config.register(
-        app, connect=build_connector(local=lambda _target: service), read_config=read_config
+        app,
+        connect=build_connector(local=lambda _target: nullcontext(service)),
+        read_config=read_config,
     )
 
     assert "show" in app["config"]
@@ -80,7 +85,7 @@ def test_show_reports_an_unavailable_api(
 ) -> None:
     app = build_app(
         read_config=read_config,
-        connect=build_connector(local=lambda _target: service),
+        connect=build_connector(local=lambda _target: nullcontext(service)),
         version=TEST_VERSION,
     )
     config_file = tmp_path / "config.yaml"

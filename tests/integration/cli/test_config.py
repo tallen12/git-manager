@@ -1,4 +1,5 @@
 import json
+from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
 
 import pytest
@@ -31,13 +32,15 @@ def test_show_and_validate_read_the_same_layers(
     def read_config(path: Path) -> YamlConfigFile:
         return YamlConfigFile(path, environ=environ, repo_config=CheckoutRepoConfig())
 
-    def local(target: LocalTarget) -> Operations:
+    def local(target: LocalTarget) -> AbstractAsyncContextManager[Operations]:
         reason = "not built in this test"
-        return Service(
-            health=HealthService(reporter=reporter),
-            config=ConfigService(read_config(target.config)),
-            branches=UnavailableBranches(reason),
-            runs=UnavailableRuns(reason),
+        return nullcontext(
+            Service(
+                health=HealthService(reporter=reporter),
+                config=ConfigService(read_config(target.config)),
+                branches=UnavailableBranches(reason),
+                runs=UnavailableRuns(reason),
+            )
         )
 
     app = build_app(

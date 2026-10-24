@@ -3,7 +3,8 @@
 import inspect
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -11,26 +12,27 @@ from cyclopts import App, CycloptsError, Parameter
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
-from git_manager.cli import config, health, server
-from git_manager.config import CheckoutRepoConfig, ConfigReader, ConfigService, YamlConfigFile
+from git_manager.cli import branches, config, health, runs, server
+from git_manager.config import (
+    CheckoutRepoConfig,
+    ConfigReader,
+    RepoConfigSource,
+    YamlConfigFile,
+)
 from git_manager.core import (
     Connector,
     HttpTarget,
     LocalTarget,
     Operations,
-    Service,
     Settings,
     SocketTarget,
     build_connector,
 )
-from git_manager.core.unavailable import UnavailableBranches, UnavailableRuns
-from git_manager.health import HealthService, StaticHealthReporter
+from git_manager.core.compose import open_local, process_runner
 from git_manager.metadata import package_version
 
 # Exit status for invalid settings, matching cyclopts' own usage errors.
 _USAGE_ERROR = 2
-# Replaced domain by domain as M1 lands; see design-docs/feature-plan.md.
-_NOT_BUILT_YET = "not implemented yet"
 # The token has no flag, so its errors keep the ``target.token`` path.
 _TARGET_FLAGS = frozenset(
     {*LocalTarget.model_fields, *HttpTarget.model_fields, *SocketTarget.model_fields} - {"token"}
@@ -81,6 +83,8 @@ def build_app(*, connect: Connector, read_config: ConfigReader, version: str) ->
     # One module per domain registers that domain's commands.
     health.register(app, connect=connect)
     config.register(app, connect=connect, read_config=read_config)
+    branches.register(app, connect=connect)
+    runs.register(app, connect=connect)
     server.register(app, connect=connect, version=version)
 
     @app.meta.default
@@ -109,22 +113,33 @@ def run(app: App, tokens: Sequence[str] | None = None) -> None:
         sys.exit(_USAGE_ERROR)
 
 
+def local_connector(
+    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
+) -> Connector:
+    """The connector ``main`` uses: local mode through ``open_local``, API mode over httpx."""
+
+    @asynccontextmanager
+    async def local(target: LocalTarget) -> AsyncGenerator[Operations]:
+        runtime = open_local(
+            target,
+            environ=environ,
+            repo_config=repo_config,
+            runner=process_runner(environ),
+            version=version,
+        )
+        async with runtime as opened:
+            yield opened.service
+
+    return build_connector(local=local)
+
+
 def main() -> None:
     """Wire concrete implementations and run the CLI."""
     version = package_version()
-    health_service = HealthService(reporter=StaticHealthReporter(version=version))
     repo_config = CheckoutRepoConfig()
 
     def read_config(path: Path) -> YamlConfigFile:
         return YamlConfigFile(path, environ=os.environ, repo_config=repo_config)
 
-    def local(target: LocalTarget) -> Operations:
-        return Service(
-            health=health_service,
-            config=ConfigService(read_config(target.config)),
-            branches=UnavailableBranches(_NOT_BUILT_YET),
-            runs=UnavailableRuns(_NOT_BUILT_YET),
-        )
-
-    connect = build_connector(local=local)
+    connect = local_connector(environ=os.environ, repo_config=repo_config, version=version)
     run(build_app(connect=connect, read_config=read_config, version=version))

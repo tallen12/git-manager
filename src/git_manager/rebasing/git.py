@@ -104,6 +104,17 @@ class SubprocessGit:
     env: Mapping[str, str] = field(default_factory=dict)
     timeout: timedelta | None = None
 
+    async def ensure_clone(self, url: str) -> None:
+        """Clone ``url`` into ``clone`` as ``remote``, unless a repository is already there.
+
+        Not part of ``Git``: only composition roots prepare the clone, before any run.
+        """
+        if await asyncio.to_thread((self.clone / ".git").exists):
+            return
+        await asyncio.to_thread(self.clone.parent.mkdir, parents=True, exist_ok=True)
+        argv = self._argv("clone", "--quiet", "--origin", self.remote, "--", url, str(self.clone))
+        await self._succeed(argv, cwd=self.clone.parent)
+
     async def ls_remote(self, refs: Sequence[str]) -> Mapping[str, CommitSha]:
         """Return the remote hash of each branch in ``refs``; missing branches are absent."""
         found: dict[str, CommitSha] = {}

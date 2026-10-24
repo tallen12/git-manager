@@ -96,8 +96,8 @@ class Remote:
     feature_head: str
 
 
-@pytest.fixture
-def remote(tmp_path: Path) -> Remote:
+def make_remote(tmp_path: Path) -> Remote:
+    """Create a ``Remote`` under ``tmp_path``; other domains' integration tests share it."""
     bare = tmp_path / "remote.git"
     teammate = tmp_path / "teammate"
     clone = tmp_path / "clone"
@@ -111,6 +111,11 @@ def remote(tmp_path: Path) -> Remote:
     git(teammate, "switch", "--quiet", "main")
     git(tmp_path, "clone", "--quiet", str(bare), str(clone))
     return Remote(bare, teammate, clone, fork_point, feature_head)
+
+
+@pytest.fixture
+def remote(tmp_path: Path) -> Remote:
+    return make_remote(tmp_path)
 
 
 @pytest.fixture

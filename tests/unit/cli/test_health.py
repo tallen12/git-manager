@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ class DownHealth:
 def test_register_adds_doctor() -> None:
     app = App(name="git-manager")
 
-    health.register(app, connect=build_connector(local=lambda _target: _unused()))
+    health.register(app, connect=build_connector(local=lambda _target: nullcontext(_unused())))
 
     assert "doctor" in app
 
@@ -47,7 +48,7 @@ def test_doctor_reports_operation_errors_on_one_line(
     config.write_text("repo: {}\n", encoding="utf-8")
     app = build_app(
         read_config=read_config,
-        connect=build_connector(local=lambda _target: operations),
+        connect=build_connector(local=lambda _target: nullcontext(operations)),
         version=TEST_VERSION,
     )
 

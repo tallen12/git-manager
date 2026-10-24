@@ -1,6 +1,6 @@
 import json
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,7 @@ def test_doctor_runs_in_process_with_config(
     config.write_text("repo: {}\n", encoding="utf-8")
     app = build_app(
         read_config=read_config,
-        connect=build_connector(local=lambda _target: service),
+        connect=build_connector(local=lambda _target: nullcontext(service)),
         version=TEST_VERSION,
     )
 

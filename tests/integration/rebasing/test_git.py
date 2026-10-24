@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from git_manager.rebasing import (
     RebaseStopped,
 )
 from git_manager.rebasing.git import SubprocessGit
-from tests.integration.rebasing.conftest import Remote, commit, git
+from tests.integration.rebasing.conftest import LocalProcessRunner, Remote, commit, git
 
 
 def advance_main(remote: Remote, content: str) -> str:
@@ -160,3 +161,15 @@ async def test_create_branch_keeps_an_attempt_locally(
 
     assert git(remote.clone, "rev-parse", "gm/attempt/feature/one/run-1") == remote.fork_point
     assert "gm/attempt" not in git(remote.bare, "branch", "--list")
+
+
+async def test_ensure_clone_clones_the_remote_once(remote: Remote, tmp_path: Path) -> None:
+    clone = tmp_path / "data" / "repo"
+    env = {"PATH": os.environ["PATH"], "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    git = SubprocessGit(runner=LocalProcessRunner(), clone=clone, env=env)
+
+    await git.ensure_clone(str(remote.bare))
+    await git.ensure_clone(str(remote.bare))
+
+    assert (await git.ls_remote(["feature/one"])) == {"feature/one": remote.feature_head}
+    assert (clone / "shared.txt").read_text(encoding="utf-8") == "one\n"

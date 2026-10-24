@@ -78,3 +78,11 @@ class RemoteRefs(Protocol):
     async def ls_remote(self, refs: Sequence[str]) -> Mapping[str, CommitSha]:
         """Return the remote hash of each branch in ``refs``; missing branches are absent."""
         ...
+
+
+class BranchSyncer(Protocol):
+    """How ``sync`` carries out a run: in the foreground (local mode) or queued (daemon)."""
+
+    async def sync(self, branch: TrackedBranch) -> SyncOutcome:
+        """Start a manual run of ``branch``, which is tracked and not paused."""
+        ...

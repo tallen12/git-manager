@@ -314,3 +314,45 @@ async def test_branch_abort_and_diff_commands() -> None:
         (("rebase", "--abort"), WORKTREE),
         (("diff", "--no-ext-diff", "--no-textconv", sha(1), sha(4), "--"), CLONE),
     ]
+
+
+# --- Preparing the clone ---
+
+
+async def test_ensure_clone_clones_into_an_empty_place(tmp_path: Path) -> None:
+    runner = FakeProcessRunner()
+    clone = tmp_path / "data" / "repo"
+    git = SubprocessGit(runner=runner, clone=clone, remote="upstream")
+
+    await git.ensure_clone("https://example.com/repo.git")
+
+    [command] = runner.commands
+    assert subcommand(command) == (
+        "clone",
+        "--quiet",
+        "--origin",
+        "upstream",
+        "--",
+        "https://example.com/repo.git",
+        str(clone),
+    )
+    assert command.cwd == clone.parent
+    assert clone.parent.is_dir()
+
+
+async def test_ensure_clone_leaves_an_existing_clone_alone(tmp_path: Path) -> None:
+    runner = FakeProcessRunner()
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    git = SubprocessGit(runner=runner, clone=tmp_path / "repo")
+
+    await git.ensure_clone("https://example.com/repo.git")
+
+    assert runner.commands == []
+
+
+async def test_ensure_clone_failure_raises(tmp_path: Path) -> None:
+    runner = FakeProcessRunner(respond=lambda _command: done(exit_code=128, stderr="denied"))
+    git = SubprocessGit(runner=runner, clone=tmp_path / "repo")
+
+    with pytest.raises(GitError, match="denied"):
+        await git.ensure_clone("https://example.com/repo.git")
