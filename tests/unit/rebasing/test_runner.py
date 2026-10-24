@@ -7,7 +7,7 @@ import pytest
 
 from git_manager.branches import BranchHeads, BranchState, Reason
 from git_manager.config.models import ApprovalPolicy, BranchOptions, RepoConfig, VerifyConfig
-from git_manager.core.errors import NotFoundError
+from git_manager.errors import NotFoundError
 from git_manager.events import EventKind
 from git_manager.rebasing import (
     PushOutcome,

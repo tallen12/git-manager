@@ -12,7 +12,7 @@ from typing import NoReturn
 from git_manager.branches.models import RepoStatus, TrackedBranch
 from git_manager.branches.results import SyncOutcome
 from git_manager.config.models import RepoConfig
-from git_manager.core.errors import UnavailableError
+from git_manager.errors import UnavailableError
 from git_manager.rebasing.models import Run
 from git_manager.verification.models import TestResult
 

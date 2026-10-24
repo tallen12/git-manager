@@ -14,7 +14,7 @@ from git_manager.approvals.protocols import ApprovalGate
 from git_manager.branches.models import BranchHeads, BranchState, CommitSha, Reason, TrackedBranch
 from git_manager.branches.poller import branch_options
 from git_manager.config.models import ApprovalPolicy, BranchOptions, RepoConfig
-from git_manager.core.errors import NotFoundError
+from git_manager.errors import NotFoundError
 from git_manager.events.models import EventDraft, EventKind
 from git_manager.events.protocols import EventSink
 from git_manager.rebasing.errors import RemoteBranchMissingError

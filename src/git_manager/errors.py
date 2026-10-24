@@ -1,4 +1,8 @@
-"""Errors every operation may raise, mapped one to one to HTTP statuses by REST."""
+"""Errors every operation may raise, mapped one to one to HTTP statuses by REST.
+
+A leaf module: it imports nothing from Git Manager, so any domain can raise these without
+loading ``git_manager.core``, whose package imports the domains back.
+"""
 
 
 class OperationError(Exception):

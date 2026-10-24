@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from git_manager.branches.models import TrackedBranch
-from git_manager.core.errors import ConflictError, NotFoundError
+from git_manager.errors import ConflictError, NotFoundError
 from git_manager.events.models import Event, EventDraft
 from git_manager.rebasing.models import Run
 from git_manager.store.database import Database

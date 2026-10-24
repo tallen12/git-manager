@@ -1,6 +1,6 @@
 """Persistence contracts, one repository per record type.
 
-Writes are atomic per call. Implementations raise ``NotFoundError`` from ``core.errors``
+Writes are atomic per call. Implementations raise ``NotFoundError`` from ``git_manager.errors``
 when an update or removal names a record that does not exist.
 """
 

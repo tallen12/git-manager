@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from git_manager.core.errors import OperationError
+from git_manager.errors import OperationError
 
 LOCKED_HINT = "a daemon is using this data directory; use API mode (--url or --socket)"
 

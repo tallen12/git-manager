@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from git_manager.core.errors import OperationError
+from git_manager.errors import OperationError
 
 
 class ConfigError(OperationError):
