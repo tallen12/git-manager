@@ -2,7 +2,7 @@ from typing import Annotated
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import SecretStr
 
 from git_manager.approvals import (
@@ -14,7 +14,7 @@ from git_manager.approvals import (
     TrustedAuthenticator,
 )
 from git_manager.approvals.protocols import Authenticator
-from git_manager.web.auth import Access
+from git_manager.web.auth import Access, demand
 
 AGENT = "mcp-agent-token-0123456789abcdef012"
 
@@ -79,3 +79,14 @@ async def test_the_socket_needs_no_token_for_any_scope() -> None:
 
     assert response.status_code == httpx.codes.OK
     assert response.json() == "socket"
+
+
+def test_demand_passes_a_holder_and_refuses_anyone_else_with_403() -> None:
+    agent = Principal(name="mcp-agent", scopes=frozenset({Scope.READ, Scope.OPERATE}))
+
+    demand(agent, Scope.OPERATE)
+    with pytest.raises(HTTPException) as raised:
+        demand(agent, Scope.APPROVE)
+
+    assert raised.value.status_code == httpx.codes.FORBIDDEN
+    assert raised.value.detail == "token 'mcp-agent' lacks the approve scope"

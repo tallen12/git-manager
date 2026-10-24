@@ -2,8 +2,10 @@
 
 import asyncio
 
+from pydantic import JsonValue
+
 from git_manager.config.models import RepoConfig
-from git_manager.config.protocols import ConfigStore
+from git_manager.config.protocols import ConfigPath, ConfigStore
 
 
 class ConfigService:
@@ -19,3 +21,7 @@ class ConfigService:
     async def show(self) -> RepoConfig:
         """Return the effective config; raise ``ConfigError`` if it is invalid."""
         return await asyncio.to_thread(self._store.load)
+
+    async def set(self, path: ConfigPath, value: JsonValue) -> RepoConfig:
+        """Edit the file and return the new effective config; raise ``ConfigError``."""
+        return await asyncio.to_thread(self._store.set, path, value)

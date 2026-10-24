@@ -18,6 +18,7 @@ RUNS = UnavailableRuns("lands in M1")
     ("call", "operation"),
     [
         (UnavailableConfig("lands in M1").show, "config show"),
+        (lambda: UnavailableConfig("lands in M1").set(("a",), 1), "config set"),
         (BRANCHES.status, "status"),
         (lambda: BRANCHES.track(name="f", base="main"), "track"),
         (lambda: BRANCHES.untrack("f"), "untrack"),

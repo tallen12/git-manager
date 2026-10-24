@@ -52,7 +52,7 @@ def eventually(check: Callable[[], bool]) -> None:
 
 def health_status(port: int, headers: dict[str, str]) -> int | None:
     try:
-        return httpx.get(f"http://127.0.0.1:{port}/healthz", headers=headers).status_code
+        return httpx.get(f"http://127.0.0.1:{port}/api/v1/healthz", headers=headers).status_code
     except httpx.ConnectError:
         return None
 
@@ -65,7 +65,7 @@ def healthy_over_socket(path: Path) -> bool:
     """Whether the daemon answers over its socket without a token."""
     transport = httpx.HTTPTransport(uds=str(path))
     with httpx.Client(transport=transport, base_url="http://git-manager") as client:
-        return client.get("/healthz").status_code == httpx.codes.OK
+        return client.get("/api/v1/healthz").status_code == httpx.codes.OK
 
 
 def locked(data_dir: Path) -> bool:

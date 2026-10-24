@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import JsonValue
+
 from git_manager.config.models import RepoConfig
 
 # A key path into the config file, as YAML keys and list indexes:
@@ -12,10 +14,19 @@ ConfigPath = Sequence[str | int]
 
 
 class ConfigOperations(Protocol):
-    """Read the effective config (``git-manager config show``, ``GET /config``)."""
+    """Read and edit the config (``git-manager config show`` / ``set``, ``/config``)."""
 
     async def show(self) -> RepoConfig:
         """Return the effective config, with defaults and per-branch blocks merged."""
+        ...
+
+    async def set(self, path: ConfigPath, value: JsonValue) -> RepoConfig:
+        """Set the value at ``path`` in the config file; return the new effective config.
+
+        Raises ``ConfigError``, leaving the file as it was, when the edit is invalid.
+        Whether the caller may change ``path`` is the interface's to check: REST needs the
+        ``approve`` scope for a sensitive key (``config.sensitivity``).
+        """
         ...
 
 

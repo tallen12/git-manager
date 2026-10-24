@@ -16,7 +16,7 @@ Requires [uv](https://docs.astral.sh/uv/) and [just](https://just.systems/).
 just setup     # install locked dependencies (Python 3.14 is fetched by uv)
 just check     # format check, lint, type check, tests
 just coverage  # tests with branch coverage
-just serve --config config.yaml  # REST on http://127.0.0.1:8765, GET /healthz
+just serve --config config.yaml  # REST on http://127.0.0.1:8765, GET /api/v1/healthz
 just mcp --config config.yaml    # MCP over stdio
 just diagrams  # re-render design-docs/images/*.dot (needs Graphviz)
 ```

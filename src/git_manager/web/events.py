@@ -9,9 +9,10 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from git_manager.approvals import Scope
 from git_manager.events import Event, EventOperations
+from git_manager.web.api_client import API_PREFIX
 from git_manager.web.auth import Access
 
-EVENTS_PATH = "/api/v1/events"
+EVENTS_PATH = f"{API_PREFIX}/events"
 
 
 def event_frame(event: Event) -> ServerSentEvent:

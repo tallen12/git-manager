@@ -231,7 +231,7 @@ class UnexpectedResponseHealth:
     """Answers health like a server that is not Git Manager."""
 
     async def status(self) -> HealthStatus:
-        raise ApiResponseError("unexpected response from http://127.0.0.1:8765/healthz")
+        raise ApiResponseError("unexpected response from http://127.0.0.1:8765/api/v1/healthz")
 
 
 def test_doctor_reports_an_unexpected_response_as_one_line(

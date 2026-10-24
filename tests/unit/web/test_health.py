@@ -5,7 +5,7 @@ from git_manager.approvals import TrustedAuthenticator
 from git_manager.health import HealthOperations, HealthService, StaticHealthReporter
 from git_manager.web.api_client import ApiClient
 from git_manager.web.auth import Access
-from git_manager.web.health import HttpHealthOperations, health_router
+from git_manager.web.health import HEALTH_PATH, HttpHealthOperations, health_router
 
 
 async def test_client_mirror_reads_what_the_route_serves() -> None:
@@ -19,3 +19,7 @@ async def test_client_mirror_reads_what_the_route_serves() -> None:
         status = await operations.status()
 
     assert status.version == "1.0"
+
+
+def test_health_lives_under_the_api_prefix() -> None:
+    assert HEALTH_PATH == "/api/v1/healthz"

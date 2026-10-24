@@ -16,9 +16,13 @@ from git_manager.approvals import (
 )
 from git_manager.core import Connector, Operations, Target
 from git_manager.web.auth import Access
+from git_manager.web.branches import branches_router
+from git_manager.web.config import config_router
+from git_manager.web.errors import add_error_handlers
 from git_manager.web.events import events_router
 from git_manager.web.health import health_router
 from git_manager.web.listeners import unix_listener
+from git_manager.web.runs import runs_router
 from git_manager.web.settings import HttpSettings
 
 NO_TOKENS_FILE = (
@@ -30,9 +34,13 @@ NO_TOKENS_FILE = (
 def create_app(*, operations: Operations, version: str, authenticator: Authenticator) -> FastAPI:
     """Build the REST application; every operation gets an endpoint and a scope."""
     app = FastAPI(title="Git Manager", version=version)
+    add_error_handlers(app)
     access = Access(authenticator)
     # One router per domain; each mirrors that domain's operations protocol.
     app.include_router(health_router(operations.health, access=access))
+    app.include_router(config_router(operations.config, access=access))
+    app.include_router(branches_router(operations.branches, access=access))
+    app.include_router(runs_router(operations.runs, access=access))
     app.include_router(events_router(operations.events, access=access))
     return app
 

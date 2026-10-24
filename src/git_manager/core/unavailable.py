@@ -1,6 +1,6 @@
 """Stand-ins for operation groups that a target cannot serve yet.
 
-Until a domain's real implementation lands (in-process in M1, over REST in M2), its
+Until a domain's in-process implementation lands, its
 operations raise ``UnavailableError`` with the reason, instead of being missing from
 ``Operations`` and breaking the shared contract.
 """
@@ -9,9 +9,12 @@ from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from typing import NoReturn
 
+from pydantic import JsonValue
+
 from git_manager.branches.models import RepoStatus, TrackedBranch
 from git_manager.branches.results import SyncOutcome
 from git_manager.config.models import RepoConfig
+from git_manager.config.protocols import ConfigPath
 from git_manager.errors import UnavailableError
 from git_manager.events.models import Event
 from git_manager.rebasing.models import Run
@@ -27,6 +30,10 @@ class UnavailableConfig:
     async def show(self) -> RepoConfig:
         """Raise ``UnavailableError``."""
         raise UnavailableError("config show", reason=self.reason)
+
+    async def set(self, path: ConfigPath, value: JsonValue) -> RepoConfig:
+        """Raise ``UnavailableError``."""
+        raise UnavailableError("config set", reason=self.reason)
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,7 +18,7 @@ def test_health_endpoint_reports_ok(service: Operations, authenticator: Authenti
         create_app(operations=service, version=TEST_VERSION, authenticator=authenticator)
     )
 
-    response = client.get("/healthz", headers=AUTH_HEADERS)
+    response = client.get("/api/v1/healthz", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "version": TEST_VERSION}
@@ -30,11 +30,52 @@ def test_every_route_needs_a_token(service: Operations, authenticator: Authentic
     # The documented API paths: the OpenAPI document and its pages stay open, they do nothing.
     documented: object = app.openapi()["paths"]
     assert isinstance(documented, dict)
-    paths = [str(path) for path in documented]
+    routes = [
+        (str(method).upper(), str(path))
+        for path, methods in documented.items()
+        if isinstance(methods, dict)
+        for method in methods
+    ]
 
-    assert paths
-    for path in paths:
-        assert client.get(path).status_code == 401, path
+    assert len(routes) == 14
+    for method, path in routes:
+        assert client.request(method, path).status_code == 401, (method, path)
+
+
+def test_every_operation_has_its_route(service: Operations, authenticator: Authenticator) -> None:
+    app = create_app(operations=service, version=TEST_VERSION, authenticator=authenticator)
+    documented: object = app.openapi()["paths"]
+    assert isinstance(documented, dict)
+
+    assert sorted(str(path) for path in documented) == [
+        "/api/v1/branches",
+        "/api/v1/branches/{branch}",
+        "/api/v1/branches/{branch}/pause",
+        "/api/v1/branches/{branch}/resume",
+        "/api/v1/branches/{branch}/sync",
+        "/api/v1/config",
+        "/api/v1/events",
+        "/api/v1/healthz",
+        "/api/v1/repo",
+        "/api/v1/runs",
+        "/api/v1/runs/{run_id}",
+        "/api/v1/runs/{run_id}/diff",
+        "/api/v1/runs/{run_id}/tests",
+    ]
+
+
+def test_operation_errors_keep_their_status(
+    service: Operations, authenticator: Authenticator
+) -> None:
+    # ``service`` builds no branches, so they raise UnavailableError: 501 with its body.
+    client = TestClient(
+        create_app(operations=service, version=TEST_VERSION, authenticator=authenticator)
+    )
+
+    response = client.get("/api/v1/repo", headers=AUTH_HEADERS)
+
+    assert response.status_code == 501
+    assert response.json()["error"]["type"] == "unavailable"
 
 
 @pytest.fixture

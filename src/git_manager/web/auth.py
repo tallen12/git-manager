@@ -12,6 +12,19 @@ from git_manager.approvals import Authenticator, Principal, Scope
 _BEARER = HTTPBearer(auto_error=False)
 
 
+def demand(principal: Principal, scope: Scope) -> None:
+    """Answer ``403`` unless ``principal`` holds ``scope``.
+
+    For a route whose scope depends on the request, like ``PATCH /config`` with a
+    sensitive key; every other route declares its scope with ``Access.requires``.
+    """
+    if not principal.allows(scope):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"token {principal.name!r} lacks the {scope} scope",
+        )
+
+
 class Access:
     """Builds the dependency each route declares for the scope it needs.
 
@@ -38,11 +51,7 @@ class Access:
                     detail="missing or invalid API token",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            if not found.allows(scope):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"token {found.name!r} lacks the {scope} scope",
-                )
+            demand(found, scope)
             return found
 
         # The class itself: ``fastapi.Depends`` is typed as returning ``Any``.

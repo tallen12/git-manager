@@ -39,3 +39,13 @@ async def test_show_returns_the_store_config_read_on_every_call() -> None:
 async def test_show_raises_the_store_config_error() -> None:
     with pytest.raises(ConfigError, match=r"repo\.url: missing"):
         await ConfigService(FakeStore(None)).show()
+
+
+async def test_set_edits_the_store_and_returns_the_new_config() -> None:
+    config = RepoConfig.model_validate({"repo": {"url": "u"}})
+    store = FakeStore(config)
+
+    updated = await ConfigService(store).set(("defaults", "cadence", "mode"), "manual")
+
+    assert updated == config
+    assert store.sets == [(("defaults", "cadence", "mode"), "manual")]
