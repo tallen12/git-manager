@@ -14,6 +14,7 @@ Requires [uv](https://docs.astral.sh/uv/) and [just](https://just.systems/).
 
 ```sh
 just setup     # install locked dependencies (Python 3.14 is fetched by uv)
+just hooks     # install the pre-commit hooks: gitleaks secret scan, ruff (needs Go)
 just check     # format check, lint, type check, tests
 just coverage  # tests with branch coverage
 just serve --config config.yaml  # REST on http://127.0.0.1:8765, GET /healthz
