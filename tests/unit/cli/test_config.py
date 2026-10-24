@@ -9,7 +9,7 @@ from git_manager.cli import config
 from git_manager.cli.main import build_app
 from git_manager.config import ConfigService
 from git_manager.core import LocalTarget, Operations, Service, build_connector
-from git_manager.core.unavailable import UnavailableBranches, UnavailableRuns
+from git_manager.core.unavailable import UnavailableBranches, UnavailableEvents, UnavailableRuns
 from git_manager.health import HealthReporter, HealthService
 from tests.conftest import TEST_VERSION, run_cli
 from tests.unit.cli.conftest import no_runtime, read_config
@@ -29,6 +29,7 @@ def app(reporter: HealthReporter) -> App:
                 config=ConfigService(read_config(target.config)),
                 branches=UnavailableBranches(reason),
                 runs=UnavailableRuns(reason),
+                events=UnavailableEvents(reason),
             )
         )
 
@@ -57,6 +58,7 @@ def test_register_adds_the_config_group(service: Operations) -> None:
     )
 
     assert "show" in app["config"]
+    assert "set" in app["config"]
     assert "validate" in app["config"]
 
 
@@ -139,3 +141,56 @@ def test_validate_needs_a_config_file_in_api_mode(
 
     assert status == 1
     assert "pass --config PATH" in capsys.readouterr().err
+
+
+def test_set_edits_the_file_and_prints_the_new_config(
+    app: App, config_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_file.write_text("# keep me\n" + CONFIG, encoding="utf-8")
+
+    status = run_cli(
+        app, ["config", "set", "branches.0.base", "develop", "--config", str(config_file)]
+    )
+
+    assert status == 0
+    assert json.loads(capsys.readouterr().out)["branches"][0]["base"] == "develop"
+    text = config_file.read_text(encoding="utf-8")
+    assert text.startswith("# keep me\n")
+    assert "base: develop" in text
+
+
+def test_set_reports_an_invalid_edit_and_keeps_the_file(
+    app: App, config_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    status = run_cli(app, ["config", "set", "budget.daily_usd", "0", "--config", str(config_file)])
+
+    assert status == 1
+    assert capsys.readouterr().err.startswith(f"error: invalid config {config_file}: budget")
+    assert config_file.read_text(encoding="utf-8") == CONFIG
+
+
+@pytest.mark.parametrize(
+    ("key", "path"),
+    [
+        ("defaults.cadence.mode", ("defaults", "cadence", "mode")),
+        ("branches.0.base", ("branches", 0, "base")),
+        ("repo", ("repo",)),
+    ],
+)
+def test_parse_key_reads_list_indexes_as_numbers(key: str, path: tuple[str | int, ...]) -> None:
+    assert config.parse_key(key) == path
+
+
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ("true", True),
+        ("30", 30),
+        ('["a", 1]', ["a", 1]),
+        ("null", None),
+        ("main", "main"),
+        ("10m", "10m"),
+    ],
+)
+def test_parse_value_reads_json_or_else_a_string(text: str, value: object) -> None:
+    assert config.parse_value(text) == value

@@ -1,9 +1,9 @@
 """Event contracts."""
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from typing import Protocol, Self
 
-from git_manager.events.models import Event, EventDraft
+from git_manager.events.models import Event, EventDraft, Notification
 
 
 class EventSink(Protocol):
@@ -43,4 +43,32 @@ class EventSource(Protocol):
 
     def subscribe(self, *, accept: Callable[[Event], bool] | None = None) -> EventSubscription:
         """Start receiving events emitted from now on that ``accept`` (default: all)."""
+        ...
+
+
+class EventHistory(Protocol):
+    """The recorded event log, read to replay what a client missed."""
+
+    async def list(self, *, after: int = 0, limit: int = 100) -> Sequence[Event]:
+        """Return events with an id above ``after``, oldest first."""
+        ...
+
+
+class EventOperations(Protocol):
+    """The event stream behind ``GET /api/v1/events`` and ``git-manager watch``."""
+
+    def stream(self, *, after: int | None = None) -> AsyncGenerator[Event]:
+        """Yield events in id order until the server stops; close the iterator to leave.
+
+        With ``after``, first replay recorded events with a higher id, so a client that
+        reconnects with the last id it saw misses nothing. Without it, only new events.
+        """
+        ...
+
+
+class Notifier(Protocol):
+    """Shows a notification to the person at the host, e.g. a desktop notification."""
+
+    async def notify(self, notification: Notification) -> None:
+        """Show ``notification``; raise ``NotificationError`` if it could not be shown."""
         ...

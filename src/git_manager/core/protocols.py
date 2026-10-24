@@ -4,6 +4,7 @@ from typing import Protocol
 
 from git_manager.branches.protocols import BranchOperations
 from git_manager.config.protocols import ConfigOperations
+from git_manager.events.protocols import EventOperations
 from git_manager.health.protocols import HealthOperations
 from git_manager.rebasing.protocols import RunOperations
 
@@ -35,4 +36,9 @@ class Operations(Protocol):
     @property
     def runs(self) -> RunOperations:
         """Runs and their reports."""
+        ...
+
+    @property
+    def events(self) -> EventOperations:
+        """The live event stream."""
         ...

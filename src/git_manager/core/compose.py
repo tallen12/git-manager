@@ -10,11 +10,13 @@ import shlex
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, assert_never
 
 from git_manager.approvals.gate import UnrecordedApprovalGate
+from git_manager.branches.protocols import BranchSyncer
+from git_manager.branches.queue import FifoRunQueue
 from git_manager.branches.service import BranchService
-from git_manager.branches.sync import ForegroundSync
+from git_manager.branches.sync import ForegroundSync, QueuedSync, SyncMode
 from git_manager.config.file import YamlConfigFile
 from git_manager.config.models import RepoConfig
 from git_manager.config.protocols import RepoConfigSource
@@ -23,6 +25,8 @@ from git_manager.config.service import ConfigService
 from git_manager.core.service import Service
 from git_manager.core.targets import LocalTarget
 from git_manager.events.bus import EventBus
+from git_manager.events.protocols import EventHistory
+from git_manager.events.stream import EventStreamService
 from git_manager.health.reporters import StaticHealthReporter
 from git_manager.health.service import HealthService
 from git_manager.isolation.channel import DEFAULT_SOCKET, UnixSocketSupervisorChannel
@@ -67,6 +71,8 @@ class LocalRuntime:
     opened (it fixed the data directory; read the current one with
     ``service.config.show()``), ``events`` is both the ``EventSink`` and ``EventSource``,
     and ``executor`` runs one rebase (it shares the branch locks ``service`` uses).
+    ``queue`` is the run queue the daemon's worker drains; with ``SyncMode.QUEUED``,
+    ``service``'s sync puts runs there too.
     """
 
     service: Service
@@ -77,6 +83,7 @@ class LocalRuntime:
     events: EventBus
     executor: RunExecutor
     clock: Clock
+    queue: FifoRunQueue
 
 
 class RuntimeOpener(Protocol):
@@ -123,6 +130,7 @@ async def open_local(
     repo_config: RepoConfigSource,
     runner: ProcessRunner,
     version: str,
+    sync: SyncMode = SyncMode.FOREGROUND,
 ) -> AsyncGenerator[LocalRuntime]:
     """Open the target's config, data directory and store, and build the service on them.
 
@@ -130,7 +138,9 @@ async def open_local(
     (``DataDirectoryLockedError``, naming API mode, if a daemon holds it), open
     ``state.db``, and clone ``repo.url`` into ``<data_dir>/repo`` if it is not there yet.
     Everything is released when the block ends. ``runner`` runs git as the orchestrator
-    and test commands as ``gm-tests``; see ``process_runner``.
+    and test commands as ``gm-tests``; see ``process_runner``. ``sync`` picks how the
+    service's ``sync`` runs: in the foreground for local-mode commands, or queued for
+    ``serve``.
     """
     store = YamlConfigFile(target.config, environ=environ, repo_config=repo_config)
     config = await asyncio.to_thread(store.load)
@@ -138,6 +148,7 @@ async def open_local(
     clock = SystemClock()
     with held(FileDataDirectoryLock(data_dir)):
         async with open_database(state_db_path(data_dir)) as database:
+            event_log = SqlEventRepository(database)
             git = SubprocessGit(
                 runner=runner, clone=data_dir / CLONE_DIR, env=git_environment(config, environ)
             )
@@ -148,11 +159,13 @@ async def open_local(
                 config_service=ConfigService(store),
                 branches=SqlBranchRepository(database),
                 runs=SqlRunRepository(database),
-                events=EventBus(repository=SqlEventRepository(database), clock=clock),
+                events=EventBus(repository=event_log, clock=clock),
+                event_history=event_log,
                 git=git,
                 runner=runner,
                 clock=clock,
                 version=version,
+                sync=sync,
             )
 
 
@@ -163,10 +176,12 @@ def _build(
     branches: BranchRepository,
     runs: RunRepository,
     events: EventBus,
+    event_history: EventHistory,
     git: Git,
     runner: ProcessRunner,
     clock: Clock,
     version: str,
+    sync: SyncMode,
 ) -> LocalRuntime:
     ids = RandomIds()
     locks = InMemoryBranchLocks()
@@ -182,6 +197,14 @@ def _build(
         clock=clock,
         ids=ids,
     )
+    queue = FifoRunQueue(clock=clock)
+    match sync:
+        case SyncMode.FOREGROUND:
+            syncer: BranchSyncer = ForegroundSync(executor=executor, config=config_service)
+        case SyncMode.QUEUED:
+            syncer = QueuedSync(queue=queue)
+        case _:
+            assert_never(sync)
     service = Service(
         health=HealthService(reporter=StaticHealthReporter(version=version)),
         config=config_service,
@@ -190,12 +213,13 @@ def _build(
             config=config_service,
             git=git,
             branches=branches,
-            syncer=ForegroundSync(executor=executor, config=config_service),
+            syncer=syncer,
             events=events,
             locks=locks,
             ids=ids,
         ),
         runs=RunService(runs=runs, branches=branches, git=git),
+        events=EventStreamService(source=events, history=event_history),
     )
     return LocalRuntime(
         service=service,
@@ -206,4 +230,5 @@ def _build(
         events=events,
         executor=executor,
         clock=clock,
+        queue=queue,
     )

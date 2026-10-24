@@ -1,10 +1,16 @@
-"""Which events reach notification sinks, per ``notify.on``."""
+"""Which events reach notification sinks, per ``notify.on``, and how they read."""
 
-from collections.abc import Callable, Collection
+import logging
+from collections.abc import AsyncIterable, Callable, Collection
 from typing import assert_never
 
 from git_manager.config.models import NotifyOn
-from git_manager.events.models import Event, EventKind
+from git_manager.events.errors import NotificationError
+from git_manager.events.models import Event, EventKind, Notification
+from git_manager.events.protocols import Notifier
+
+NOTIFICATION_TITLE = "Git Manager"
+_LOGGER = logging.getLogger(__name__)
 
 _TOPICS = {topic.value: topic for topic in NotifyOn}
 
@@ -43,3 +49,37 @@ def notification_filter(on: Collection[NotifyOn]) -> Callable[[Event], bool]:
     """An ``accept`` predicate for ``EventSource.subscribe`` from ``notify.on``."""
     topics = frozenset(on)
     return lambda event: should_notify(event, topics)
+
+
+def notification_for(event: Event) -> Notification:
+    """The notification shown for ``event``: its branch, then what happened and why."""
+    match event.kind:
+        case EventKind.STATE_CHANGED if event.state is not None:
+            what = event.state.value
+        case _:
+            what = event.kind.value
+    if event.reason is not None:
+        what = f"{what} ({event.reason.value})"
+    return Notification(title=NOTIFICATION_TITLE, message=f"branch {event.branch_id}: {what}")
+
+
+async def forward_notifications(
+    events: AsyncIterable[Event],
+    *,
+    notifier: Notifier,
+    on: Collection[NotifyOn],
+    logger: logging.Logger = _LOGGER,
+) -> None:
+    """Show a notification for each event ``notify.on`` selects, until ``events`` ends.
+
+    A notification that cannot be shown is logged and skipped: one failure must not end
+    the watch.
+    """
+    topics = frozenset(on)
+    async for event in events:
+        if not should_notify(event, topics):
+            continue
+        try:
+            await notifier.notify(notification_for(event))
+        except NotificationError:
+            logger.warning("could not show the notification for event %d", event.id, exc_info=True)

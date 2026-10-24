@@ -4,12 +4,13 @@ import pytest
 
 from git_manager.branches import BranchState
 from git_manager.branches.protocols import BranchSyncer
-from git_manager.branches.results import SyncCompleted
-from git_manager.branches.sync import ForegroundSync
+from git_manager.branches.queue import FifoRunQueue
+from git_manager.branches.results import SyncCompleted, SyncQueued
+from git_manager.branches.sync import ForegroundSync, QueuedSync
 from git_manager.config.models import RepoConfig
 from git_manager.errors import ConflictError
 from git_manager.rebasing import RemoteBranchMissingError, Run, RunTrigger
-from tests.conftest import make_branch, make_run
+from tests.conftest import FixedClock, make_branch, make_run
 from tests.unit.branches.conftest import StaticConfig
 
 
@@ -54,3 +55,40 @@ async def test_reports_a_missing_remote_branch_as_a_conflict() -> None:
         await syncer.sync(make_branch(state=BranchState.IDLE))
 
     assert raised.value.__cause__ is error
+
+
+async def test_queued_sync_puts_a_manual_run_and_returns_at_once(clock: FixedClock) -> None:
+    queue = FifoRunQueue(clock=clock)
+    syncer: BranchSyncer = QueuedSync(queue=queue)
+
+    outcome = await syncer.sync(make_branch(id="branch-1"))
+
+    assert outcome == SyncQueued(branch_id="branch-1", position=0)
+    assert [(run.branch_id, run.trigger) for run in queue.waiting()] == [
+        ("branch-1", RunTrigger.MANUAL)
+    ]
+
+
+async def test_queued_sync_counts_the_active_and_earlier_runs(clock: FixedClock) -> None:
+    queue = FifoRunQueue(clock=clock)
+    queue.put("running", trigger=RunTrigger.POLL)
+    queue.put("waiting", trigger=RunTrigger.POLL)
+    queue.put("next", trigger=RunTrigger.POLL)
+    syncer = QueuedSync(queue=queue)
+
+    async with queue.take():
+        outcome = await syncer.sync(make_branch(id="branch-1"))
+
+    assert outcome == SyncQueued(branch_id="branch-1", position=3)
+
+
+async def test_queued_sync_of_a_waiting_branch_reports_its_place(clock: FixedClock) -> None:
+    queue = FifoRunQueue(clock=clock)
+    queue.put("branch-1", trigger=RunTrigger.POLL)
+    queue.put("other", trigger=RunTrigger.POLL)
+    syncer = QueuedSync(queue=queue)
+
+    outcome = await syncer.sync(make_branch(id="branch-1"))
+
+    assert outcome == SyncQueued(branch_id="branch-1", position=0)
+    assert [run.branch_id for run in queue.waiting()] == ["branch-1", "other"]

@@ -3,18 +3,24 @@
 from dataclasses import dataclass
 
 from fastapi import APIRouter
+from pydantic import TypeAdapter
 
+from git_manager.approvals import Scope
 from git_manager.health import HealthOperations, HealthStatus
-from git_manager.web.api_client import ApiClient
+from git_manager.web.api_client import API_PREFIX, ApiClient
+from git_manager.web.auth import Access
+from git_manager.web.errors import ERROR_RESPONSES
 
-HEALTH_PATH = "/healthz"
+HEALTH_PATH = f"{API_PREFIX}/healthz"
+
+_STATUS = TypeAdapter(HealthStatus)
 
 
-def health_router(operations: HealthOperations) -> APIRouter:
+def health_router(operations: HealthOperations, *, access: Access) -> APIRouter:
     """Routes for ``HealthOperations``."""
-    router = APIRouter()
+    router = APIRouter(tags=["health"], responses=ERROR_RESPONSES)
 
-    @router.get(HEALTH_PATH)
+    @router.get(HEALTH_PATH, dependencies=[access.requires(Scope.READ)])
     async def healthz() -> HealthStatus:
         return await operations.status()
 
@@ -29,4 +35,4 @@ class HttpHealthOperations:
 
     async def status(self) -> HealthStatus:
         """Report the daemon's health."""
-        return await self.api.get(HEALTH_PATH, HealthStatus)
+        return await self.api.get(HEALTH_PATH, _STATUS)

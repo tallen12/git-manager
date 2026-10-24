@@ -15,6 +15,21 @@ target:
 http:
   host: 127.0.0.1
   port: 8765
+  tokens_file: tokens.yaml       # required by serve; every HTTP request needs a token
+  # socket: /run/git-manager/api.sock   # also serve on this Unix socket (mode 0660, its
+  #                              # directory's group); requests over it have every scope
+
+# The tokens file holds secrets: keep it readable by the daemon only. Each token is at
+# least 32 characters (for example `openssl rand -hex 32`) and lists its scopes; none
+# implies another. Never give an MCP client's token the approve scope.
+#
+#   tokens:
+#     - name: operator
+#       token: <64 hex characters>
+#       scopes: [read, operate, approve]
+#     - name: mcp-agent
+#       token: <64 hex characters>
+#       scopes: [read, operate]
 
 # The MCP server.
 mcp:

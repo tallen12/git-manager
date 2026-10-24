@@ -1,15 +1,35 @@
-"""Config commands: ``config show`` (any mode) and ``config validate`` (offline)."""
+"""Config commands: ``config show`` and ``set`` (any mode), ``config validate`` (offline)."""
 
 import sys
 from typing import Annotated, assert_never
 
 from cyclopts import App, Parameter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from git_manager.cli.output import reported
-from git_manager.config import ConfigError, ConfigReader
+from git_manager.config import ConfigError, ConfigPath, ConfigReader
 from git_manager.core import Connector, HttpTarget, LocalTarget, Settings, SocketTarget
 
 _NEEDS_FILE = "config validate checks a config file: pass --config PATH or set GM_TARGET__CONFIG"
+
+_JSON = TypeAdapter[JsonValue](JsonValue)
+
+
+def parse_key(key: str) -> ConfigPath:
+    """A dotted key as a config path; all-digit parts are list indexes.
+
+    ``defaults.cadence.mode`` is ``("defaults", "cadence", "mode")`` and
+    ``branches.0.base`` is ``("branches", 0, "base")``.
+    """
+    return tuple(int(part) if part.isdigit() else part for part in key.split("."))
+
+
+def parse_value(text: str) -> JsonValue:
+    """``text`` as JSON (``true``, ``30``, ``["a"]``, ``null``), or else the plain string."""
+    try:
+        return _JSON.validate_json(text)
+    except ValidationError:
+        return text
 
 
 def register(app: App, *, connect: Connector, read_config: ConfigReader) -> None:
@@ -23,6 +43,21 @@ def register(app: App, *, connect: Connector, read_config: ConfigReader) -> None
         with reported():
             async with connect(settings.target) as operations:
                 effective = await operations.config.show()
+        print(effective.model_dump_json(indent=2))
+
+    @config.command(name="set")
+    async def set_(
+        key: str, value: str, *, settings: Annotated[Settings, Parameter(parse=False)]
+    ) -> None:
+        """Set KEY (dotted, like defaults.cadence.mode) to VALUE in the config file.
+
+        VALUE is read as JSON when it parses (true, 30, ["a"], null), else as a string.
+        Comments in the file are kept. Prints the new effective config as JSON. Over the
+        API, sensitive keys (verify, claude, budget, ...) need the approve scope.
+        """
+        with reported():
+            async with connect(settings.target) as operations:
+                effective = await operations.config.set(parse_key(key), parse_value(value))
         print(effective.model_dump_json(indent=2))
 
     @config.command

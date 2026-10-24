@@ -6,11 +6,13 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 import pytest
+from pydantic import JsonValue
 
 from git_manager.branches import BranchState, TrackedBranch
 from git_manager.branches.results import SyncCompleted, SyncOutcome
 from git_manager.branches.service import BranchService
 from git_manager.config.models import RepoConfig, RepoSection
+from git_manager.config.protocols import ConfigPath
 from git_manager.rebasing.locks import InMemoryBranchLocks
 from git_manager.rebasing.models import Run, RunTrigger
 from tests.conftest import (
@@ -39,6 +41,10 @@ class StaticConfig:
         if self.error is not None:
             raise self.error
         return self.config
+
+    async def set(self, path: ConfigPath, value: JsonValue) -> RepoConfig:
+        msg = f"branches never edit the config: {path} = {value!r}"
+        raise AssertionError(msg)
 
 
 @dataclass(slots=True)

@@ -1,7 +1,12 @@
 from dataclasses import dataclass
 
 from git_manager.core import Operations, Service
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
 from git_manager.health import HealthStatus
 
 
@@ -24,6 +29,7 @@ async def test_service_exposes_each_injected_domain() -> None:
         config=UnavailableConfig("later"),
         branches=branches,
         runs=UnavailableRuns("later"),
+        events=UnavailableEvents("later"),
     )
 
     assert await service.health.status() == expected

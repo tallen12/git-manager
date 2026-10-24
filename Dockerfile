@@ -81,9 +81,12 @@ COPY src ./src
 RUN uv sync --locked --no-dev --no-cache
 ENV PATH="/app/.venv/bin:$PATH"
 
-# The daemon runs in local mode against the mounted config (see design-docs/spec.md).
+# The daemon runs in local mode against the mounted config (see design-docs/spec.md). It
+# serves REST on TCP with tokens from the gm_tokens secret, and on the gm-admin socket.
 ENV GM_TARGET__CONFIG=/etc/git-manager/config.yaml \
-    GM_HTTP__HOST=0.0.0.0
+    GM_HTTP__HOST=0.0.0.0 \
+    GM_HTTP__TOKENS_FILE=/run/secrets/gm_tokens \
+    GM_HTTP__SOCKET=/run/git-manager/api.sock
 
 # The supervisor needs root (with only CAP_CHOWN, CAP_KILL, CAP_SETGID and CAP_SETUID) to
 # start the daemon as gm and commands as gm-claude or gm-tests.

@@ -8,13 +8,20 @@ from pathlib import Path
 
 import pytest
 from cyclopts import App
+from pydantic import SecretStr
 
+from git_manager.approvals import ApiToken, Scope, TokenAuthenticator, TokensFile
 from git_manager.branches import BranchHeads, BranchState, TrackedBranch
 from git_manager.cli.main import run
 from git_manager.config import VerifyConfig
 from git_manager.core import ConflictError, NotFoundError, Operations, Service
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
-from git_manager.events import Event, EventDraft
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
+from git_manager.events import Event, EventDraft, Notification, NotificationError
 from git_manager.health import HealthReporter, HealthService, StaticHealthReporter
 from git_manager.rebasing import (
     LeaseRejected,
@@ -29,6 +36,9 @@ from git_manager.runtime import Command, ProcessCompleted, ProcessResult
 from git_manager.verification import VerifyCommands, VerifyOutcome, VerifyPassed
 
 TEST_VERSION = "0.0.0-test"
+# Accepted by ``authenticator`` with every scope; send it with ``AUTH_HEADERS``.
+TEST_TOKEN = "test-token-0123456789abcdef0123456789"
+AUTH_HEADERS = {"Authorization": f"Bearer {TEST_TOKEN}"}
 START = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
 
 
@@ -278,6 +288,20 @@ class RecordingEventSink:
         return await self.log.append(draft, at=self.clock.now())
 
 
+@dataclass(slots=True)
+class RecordingNotifier:
+    """``Notifier`` that records what it shows; fails instead while ``failing`` is set."""
+
+    shown: builtins.list[Notification] = field(default_factory=builtins.list)
+    failing: bool = False
+
+    async def notify(self, notification: Notification) -> None:
+        if self.failing:
+            msg = "no notification daemon"
+            raise NotificationError(msg)
+        self.shown.append(notification)
+
+
 @dataclass(frozen=True, slots=True)
 class VerifyCall:
     """One call a ``FakeVerifier`` received."""
@@ -354,6 +378,13 @@ def isolated_settings(
 
 
 @pytest.fixture
+def authenticator() -> TokenAuthenticator:
+    """Accepts ``TEST_TOKEN`` as ``operator`` with every scope."""
+    entry = ApiToken(name="operator", token=SecretStr(TEST_TOKEN), scopes=frozenset(Scope))
+    return TokenAuthenticator(TokensFile(tokens=(entry,)))
+
+
+@pytest.fixture
 def reporter() -> HealthReporter:
     return StaticHealthReporter(version=TEST_VERSION)
 
@@ -367,6 +398,7 @@ def service(reporter: HealthReporter) -> Operations:
         config=UnavailableConfig(reason),
         branches=UnavailableBranches(reason),
         runs=UnavailableRuns(reason),
+        events=UnavailableEvents(reason),
     )
 
 

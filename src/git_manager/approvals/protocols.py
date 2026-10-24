@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from typing import Protocol
 
+from git_manager.approvals.models import Principal
 from git_manager.branches.models import BranchHeads
 
 
@@ -15,4 +16,14 @@ class ApprovalGate(Protocol):
 
     async def request(self, *, run_id: str, base_sha: str, heads: Sequence[BranchHeads]) -> str:
         """Record a pending approval bound to ``base_sha`` and ``heads``; return its id."""
+        ...
+
+
+class Authenticator(Protocol):
+    """Decides who an API request acts as, from its bearer token."""
+
+    def authenticate(self, token: str | None) -> Principal | None:
+        """The principal for ``token`` (``None`` when the request sent none), or ``None``
+        when the request is not authenticated.
+        """
         ...

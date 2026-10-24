@@ -1,5 +1,6 @@
 """Event value types: every state change emits one."""
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
@@ -40,3 +41,11 @@ class Event(EventDraft):
 
     id: int = Field(ge=1)
     at: AwareDatetime
+
+
+@dataclass(frozen=True, slots=True)
+class Notification:
+    """What a ``Notifier`` shows: a short title and one line of text."""
+
+    title: str
+    message: str

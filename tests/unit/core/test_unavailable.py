@@ -3,7 +3,12 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from git_manager.core import UnavailableError
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
 
 BRANCHES = UnavailableBranches("lands in M1")
 RUNS = UnavailableRuns("lands in M1")
@@ -13,6 +18,7 @@ RUNS = UnavailableRuns("lands in M1")
     ("call", "operation"),
     [
         (UnavailableConfig("lands in M1").show, "config show"),
+        (lambda: UnavailableConfig("lands in M1").set(("a",), 1), "config set"),
         (BRANCHES.status, "status"),
         (lambda: BRANCHES.track(name="f", base="main"), "track"),
         (lambda: BRANCHES.untrack("f"), "untrack"),
@@ -33,3 +39,11 @@ async def test_every_operation_raises_with_its_cli_name_and_reason(
 
     assert raised.value.operation == operation
     assert raised.value.reason == "lands in M1"
+
+
+def test_the_event_stream_raises_with_the_watch_name_and_reason() -> None:
+    with pytest.raises(UnavailableError) as raised:
+        UnavailableEvents("lands in F12b").stream(after=3)
+
+    assert raised.value.operation == "watch"
+    assert raised.value.reason == "lands in F12b"

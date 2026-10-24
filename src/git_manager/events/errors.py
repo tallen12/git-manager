@@ -11,3 +11,7 @@ class SubscriberLaggedError(Exception):
     def __init__(self, *, last_id: int) -> None:
         super().__init__(f"subscriber fell behind after event {last_id}")
         self.last_id = last_id
+
+
+class NotificationError(Exception):
+    """A notifier could not show a notification (missing program, failure or timeout)."""

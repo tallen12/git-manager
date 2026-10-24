@@ -1,13 +1,12 @@
 import httpx
-import pytest
 
-from git_manager.core import HttpOperations, Operations, UnavailableError
+from git_manager.core import HttpOperations, NotFoundError, Operations
 from git_manager.health import HealthStatus
 
 
 async def test_health_goes_through_the_api() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/healthz"
+        assert request.url.path == "/api/v1/healthz"
         return httpx.Response(200, json={"status": "ok", "version": "1.2.3"})
 
     async with httpx.AsyncClient(
@@ -19,14 +18,51 @@ async def test_health_goes_through_the_api() -> None:
     assert status == HealthStatus(status="ok", version="1.2.3")
 
 
-async def test_operations_not_in_the_api_yet_point_to_local_mode() -> None:
-    def fail(request: httpx.Request) -> httpx.Response:
-        msg = f"unexpected request {request.url}"
-        raise AssertionError(msg)
+async def test_every_domain_goes_through_the_api() -> None:
+    paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        paths.append(f"{request.method} {request.url.path}")
+        body = {
+            "detail": "branch not found: f",
+            "error": {"type": "not_found", "kind": "branch", "key": "f"},
+        }
+        return httpx.Response(404, json=body)
 
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(fail), base_url="http://test"
+        transport=httpx.MockTransport(respond), base_url="http://test"
     ) as client:
         operations = HttpOperations(client)
-        with pytest.raises(UnavailableError, match="local mode"):
-            await operations.branches.status()
+        for call in (
+            operations.config.show,
+            operations.branches.status,
+            lambda: operations.branches.pause("f"),
+            operations.runs.list,
+        ):
+            try:
+                await call()
+            except NotFoundError:
+                pass
+
+    assert paths == [
+        "GET /api/v1/config",
+        "GET /api/v1/repo",
+        "POST /api/v1/branches/f/pause",
+        "GET /api/v1/runs",
+    ]
+
+
+async def test_the_event_stream_goes_through_the_api() -> None:
+    paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        paths.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, text="")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://test"
+    ) as client:
+        events = [event async for event in HttpOperations(client).events.stream()]
+
+    assert events == []
+    assert paths == ["GET /api/v1/events"]

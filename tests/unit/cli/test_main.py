@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import pytest
+from cyclopts import App
 
-from git_manager.cli.main import build_app
+from git_manager.cli.main import build_app, run
 from git_manager.core import (
     ApiResponseError,
     HttpTarget,
@@ -16,7 +17,12 @@ from git_manager.core import (
     build_connector,
 )
 from git_manager.core.targets import PlainHttp
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
 from tests.unit.cli.conftest import no_runtime, read_config
@@ -226,7 +232,7 @@ class UnexpectedResponseHealth:
     """Answers health like a server that is not Git Manager."""
 
     async def status(self) -> HealthStatus:
-        raise ApiResponseError("unexpected response from http://127.0.0.1:8765/healthz")
+        raise ApiResponseError("unexpected response from http://127.0.0.1:8765/api/v1/healthz")
 
 
 def test_doctor_reports_an_unexpected_response_as_one_line(
@@ -238,6 +244,7 @@ def test_doctor_reports_an_unexpected_response_as_one_line(
         config=UnavailableConfig(reason),
         branches=UnavailableBranches(reason),
         runs=UnavailableRuns(reason),
+        events=UnavailableEvents(reason),
     )
     app = build_app(
         open_runtime=no_runtime,
@@ -321,3 +328,16 @@ def test_url_flag_uses_a_standalone_settings_file_plain_http_policy(service: Ope
     assert [
         target.plain_http for target in connector.targets if isinstance(target, HttpTarget)
     ] == [PlainHttp.ALLOWED]
+
+
+def test_ctrl_c_exits_130_without_a_traceback() -> None:
+    app = App(name="git-manager")
+
+    @app.meta.default
+    def launch() -> None:
+        raise KeyboardInterrupt
+
+    with pytest.raises(SystemExit) as exited:
+        run(app, [])
+
+    assert exited.value.code == 130

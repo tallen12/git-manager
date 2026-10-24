@@ -12,7 +12,9 @@ from cyclopts import App, CycloptsError, Parameter
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
-from git_manager.cli import branches, config, health, runs, server
+from git_manager.branches.sync import SyncMode
+from git_manager.cli import branches, config, events, health, runs, server
+from git_manager.cli.events import NotifierFactory
 from git_manager.config import (
     CheckoutRepoConfig,
     ConfigReader,
@@ -29,10 +31,15 @@ from git_manager.core import (
     build_connector,
 )
 from git_manager.core.compose import LocalRuntime, RuntimeOpener, open_local, process_runner
+from git_manager.events import Notifier
+from git_manager.events.desktop import desktop_notifier
+from git_manager.isolation import LocalProcessRunner
 from git_manager.metadata import package_version
 
 # Exit status for invalid settings, matching cyclopts' own usage errors.
 _USAGE_ERROR = 2
+# Shell convention for "stopped by SIGINT" (128 + 2).
+_INTERRUPTED = 130
 # The token has no flag, so its errors keep the ``target.token`` path.
 _TARGET_FLAGS = frozenset(
     {*LocalTarget.model_fields, *HttpTarget.model_fields, *SocketTarget.model_fields} - {"token"}
@@ -77,6 +84,7 @@ def build_app(
     open_runtime: RuntimeOpener,
     read_config: ConfigReader,
     version: str,
+    notifier: NotifierFactory = lambda: None,
 ) -> App:
     """Build the CLI around injected capabilities.
 
@@ -84,7 +92,8 @@ def build_app(
     that need a target declare ``settings`` with ``parse=False`` and receive the
     validated ``Settings``; ``connect`` opens the operations for its target,
     ``open_runtime`` opens a local target's whole runtime for ``serve``, and
-    ``read_config`` opens a config file directly for process-level commands.
+    ``read_config`` opens a config file directly for process-level commands, and
+    ``notifier`` opens the host's desktop notifier for ``watch --notify`` (none by default).
     """
     app = App(name="git-manager", help="Keep git branches rebased.", version=version)
     # One module per domain registers that domain's commands.
@@ -92,6 +101,7 @@ def build_app(
     config.register(app, connect=connect, read_config=read_config)
     branches.register(app, connect=connect)
     runs.register(app, connect=connect)
+    events.register(app, connect=connect, notifier=notifier)
     server.register(app, connect=connect, open_runtime=open_runtime, version=version)
 
     @app.meta.default
@@ -118,12 +128,19 @@ def run(app: App, tokens: Sequence[str] | None = None) -> None:
             _usage_error(error.__cause__)
         print(f"error: {error}", file=sys.stderr)
         sys.exit(_USAGE_ERROR)
+    except KeyboardInterrupt:
+        # Ctrl-C is how ``watch`` ends; a traceback would read as a failure.
+        sys.exit(_INTERRUPTED)
 
 
 def local_runtime(
-    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
+    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str, sync: SyncMode
 ) -> RuntimeOpener:
-    """Open a local target through ``open_local`` with this process's runner."""
+    """Open a local target through ``open_local`` with this process's runner.
+
+    ``serve`` opens it with ``SyncMode.QUEUED``, so a sync joins the daemon's run queue;
+    local-mode commands use ``SyncMode.FOREGROUND``.
+    """
 
     def open_runtime(target: LocalTarget) -> AbstractAsyncContextManager[LocalRuntime]:
         return open_local(
@@ -132,6 +149,7 @@ def local_runtime(
             repo_config=repo_config,
             runner=process_runner(environ),
             version=version,
+            sync=sync,
         )
 
     return open_runtime
@@ -141,7 +159,9 @@ def local_connector(
     *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
 ) -> Connector:
     """The connector ``main`` uses: local mode through ``open_local``, API mode over httpx."""
-    open_runtime = local_runtime(environ=environ, repo_config=repo_config, version=version)
+    open_runtime = local_runtime(
+        environ=environ, repo_config=repo_config, version=version, sync=SyncMode.FOREGROUND
+    )
 
     @asynccontextmanager
     async def local(target: LocalTarget) -> AsyncGenerator[Operations]:
@@ -160,9 +180,20 @@ def main() -> None:
         return YamlConfigFile(path, environ=os.environ, repo_config=repo_config)
 
     connect = local_connector(environ=os.environ, repo_config=repo_config, version=version)
-    open_runtime = local_runtime(environ=os.environ, repo_config=repo_config, version=version)
+    open_runtime = local_runtime(
+        environ=os.environ, repo_config=repo_config, version=version, sync=SyncMode.QUEUED
+    )
+
+    def notifier() -> Notifier | None:
+        runner = LocalProcessRunner(inherited=os.environ)
+        return desktop_notifier(sys.platform, runner=runner, cwd=Path.cwd(), environ=os.environ)
+
     run(
         build_app(
-            connect=connect, open_runtime=open_runtime, read_config=read_config, version=version
+            connect=connect,
+            open_runtime=open_runtime,
+            read_config=read_config,
+            version=version,
+            notifier=notifier,
         )
     )
