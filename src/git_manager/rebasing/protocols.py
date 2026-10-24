@@ -1,11 +1,13 @@
 """Rebasing contracts: git itself, and the run operations every interface exposes."""
 
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Protocol
 
 from git_manager.branches.models import CommitSha
-from git_manager.rebasing.models import PushOutcome, RebaseOutcome, Run
+from git_manager.config.models import RepoConfig
+from git_manager.rebasing.models import PushOutcome, RebaseOutcome, Run, RunTrigger
 from git_manager.verification.models import TestResult
 
 
@@ -63,6 +65,29 @@ class Git(Protocol):
 
     async def diff(self, start: str, end: str) -> str:
         """Return ``git diff start end``."""
+        ...
+
+
+class BranchLocks(Protocol):
+    """One holder per tracked branch at a time, so two runs never rebase the same branch."""
+
+    def hold(self, branch_id: str) -> AbstractAsyncContextManager[None]:
+        """Wait until no one holds ``branch_id``, then hold it until the block ends."""
+        ...
+
+
+class RunExecutor(Protocol):
+    """Carries out one rebase run of a tracked branch (the daemon's and ``sync``'s side)."""
+
+    async def run(self, branch_id: str, *, trigger: RunTrigger, config: RepoConfig) -> Run:
+        """Rebase, verify and push ``branch_id`` with ``config``; return the recorded run.
+
+        The run ends in a state of the sync lifecycle, or in ``awaiting_approval`` with
+        ``finished_at`` unset until the approval completes it. Raises ``NotFoundError``
+        for an untracked branch and ``RemoteBranchMissingError`` when its base or itself
+        is gone from the remote. Any other error leaves the run and the branch in
+        ``needs_human`` (no reason) and propagates.
+        """
         ...
 
 

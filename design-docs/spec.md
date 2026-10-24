@@ -91,6 +91,8 @@ Detection and action run on separate clocks: the poller checks hashes every `pol
 4. Conflicts go to the Resolver (next section); a clean rebase goes straight to Verifying.
 5. Tests green → push or wait for approval per the policy; then update `fork_point`, `last_base_sha`, `last_head_sha`.
 
+**Run edge cases.** The run checks the remote feature branch after the rebase and again after verifying; the push lease is the tip the current attempt started from, so a human push seen before the run starts is rebased, not rejected. Verify commands are resolved before any worktree is created: none gives `needs_config` with reason `missing_commands`, an unparseable one `needs_config` with `invalid_commands`. A base or feature branch gone from the remote when the run starts records no run and sets `base_missing` or `idle`. Any unexpected error stops the run and the branch in `needs_human` with no reason. A run that stops at the approval gate is not finished until the approval completes it.
+
 **Interrupts.** If the remote feature branch moves mid-run, the run is aborted and restarted from the new tip. If the lease check fails at push time, the branch goes to `diverged_remote` and waits for a human. `git-manager pause` stops polling for a branch without losing state.
 
 **Restart cap.** If the feature branch moves mid-run more than `max_restarts` times in a row (default 3), the branch is paused with reason `max_restarts` and you are notified. This is how "someone is actively pushing to it" from the non-goals is detected.
@@ -618,7 +620,8 @@ class BranchState(StrEnum):
     stack_partial_push = "stack_partial_push"
     waiting_budget = "waiting_budget"; waiting_quota = "waiting_quota"; paused = "paused"
 
-# reason values: baseline_red, missing_tool, stack_merged, stack_removed, max_restarts,
+# reason values: missing_commands, invalid_commands, conflict, rewritten_base, verify_failed,
+# lease_rejected, paused_by_user, baseline_red, missing_tool, stack_merged, stack_removed, max_restarts,
 # limit_turns, limit_budget, limit_timeout, size_gate, ...
 
 class StackInfo(BaseModel):

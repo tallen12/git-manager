@@ -1,4 +1,4 @@
-from git_manager.rebasing import GitError, GitOutputError
+from git_manager.rebasing import GitError, GitOutputError, RemoteBranchMissingError
 
 
 def test_git_error_names_the_command_and_its_stderr() -> None:
@@ -20,3 +20,10 @@ def test_git_output_error_is_a_git_error_carrying_the_output() -> None:
     assert isinstance(error, GitError)
     assert error.output == "junk"
     assert str(error) == "git merge-base exited 0: expected a hash: 'junk'"
+
+
+def test_remote_branch_missing_error_names_the_branch_and_what_is_gone() -> None:
+    error = RemoteBranchMissingError(branch="feature/one", missing="main")
+
+    assert str(error) == "cannot sync feature/one: main is not on the remote"
+    assert (error.branch, error.missing) == ("feature/one", "main")

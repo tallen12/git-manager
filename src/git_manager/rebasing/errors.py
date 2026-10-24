@@ -20,3 +20,16 @@ class GitOutputError(GitError):
     def __init__(self, *, argv: Sequence[str], output: str, problem: str) -> None:
         super().__init__(argv=argv, exit_code=0, stderr=f"{problem}: {output!r}")
         self.output = output
+
+
+class RemoteBranchMissingError(Exception):
+    """A run could not start because its base or feature branch is gone from the remote.
+
+    The branch has already been moved to ``base_missing`` (base gone) or ``idle``
+    (feature branch gone) when this is raised; no run was recorded.
+    """
+
+    def __init__(self, *, branch: str, missing: str) -> None:
+        super().__init__(f"cannot sync {branch}: {missing} is not on the remote")
+        self.branch = branch
+        self.missing = missing

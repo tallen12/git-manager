@@ -41,6 +41,8 @@ class Reason(StrEnum):
 
     # needs_config: no test command in config (and none confirmed from AGENTS.md).
     MISSING_COMMANDS = "missing_commands"
+    # needs_config: a configured verify command cannot be parsed.
+    INVALID_COMMANDS = "invalid_commands"
     # paused: the feature branch moved mid-run more than max_restarts times in a row.
     MAX_RESTARTS = "max_restarts"
     # paused: a human ran ``git-manager pause``.
