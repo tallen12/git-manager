@@ -173,3 +173,39 @@ async def test_conflict_body_keeps_the_server_message() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         with pytest.raises(ConflictError, match=r"^cannot sync f: it is paused$"):
             await ApiClient(client).post("/branches/f/sync", HEALTH)
+
+
+async def test_stream_lines_yields_the_body_line_by_line_without_a_read_timeout() -> None:
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="one\ntwo\n\nthree")
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=5) as client:
+        lines = [line async for line in ApiClient(client).stream_lines("/s", headers={"X-A": "1"})]
+
+    assert lines == ["one", "two", "", "three"]
+    assert seen[0].headers["X-A"] == "1"
+    assert seen[0].extensions["timeout"] == {"connect": 5, "read": None, "write": 5, "pool": 5}
+
+
+async def test_stream_lines_raises_the_typed_error_of_an_error_response() -> None:
+    transport = httpx.MockTransport(lambda _request: httpx.Response(403, text="missing scope"))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with pytest.raises(ApiError) as raised:
+            [line async for line in ApiClient(client).stream_lines("/s")]
+
+    assert raised.value.status_code == 403
+
+
+async def test_stream_lines_reports_an_unreachable_daemon() -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(refuse), base_url="http://test"
+    ) as client:
+        with pytest.raises(ApiUnreachableError, match="connection refused"):
+            [line async for line in ApiClient(client).stream_lines("/s")]

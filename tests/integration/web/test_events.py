@@ -4,6 +4,7 @@ import asyncio
 import json
 import tempfile
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import pytest
 import uvicorn
 
 from git_manager.approvals import TrustedAuthenticator
-from git_manager.core import Service
+from git_manager.core import HttpOperations, Service
 from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
 from git_manager.events import Event, EventDraft, EventKind
 from git_manager.events.bus import EventBus
@@ -145,3 +146,29 @@ async def test_closing_the_bus_ends_open_streams(running: Running) -> None:
 
         async with asyncio.timeout(TIMEOUT):
             assert [frame async for frame in frames(response)] == []
+
+
+async def test_http_operations_stream_live_and_replayed_events(running: Running) -> None:
+    operations = HttpOperations(running.client)
+    first = await running.bus.emit(draft())
+
+    async with aclosing(operations.events.stream(after=0)) as stream:
+        async with asyncio.timeout(TIMEOUT):
+            assert await anext(stream) == first
+            await until(lambda: running.bus.subscriber_count == 1)
+            live = await running.bus.emit(draft(EventKind.PUSHED))
+            assert await anext(stream) == live
+
+    await until(lambda: running.bus.subscriber_count == 0)
+
+
+async def test_http_operations_stream_ends_when_the_daemon_stops(running: Running) -> None:
+    operations = HttpOperations(running.client)
+
+    async with aclosing(operations.events.stream()) as stream:
+        # The stream connects, and so subscribes, only once it is read.
+        collected = asyncio.create_task(anext(stream, None))
+        await until(lambda: running.bus.subscriber_count == 1)
+        running.bus.close()
+        async with asyncio.timeout(TIMEOUT):
+            assert await collected is None

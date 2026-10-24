@@ -2,6 +2,7 @@ import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,8 +11,16 @@ from pydantic import SecretStr
 from git_manager.approvals import ApiToken, Authenticator, Scope, TokenAuthenticator, TokensFile
 from git_manager.branches import BranchState
 from git_manager.events import Event, EventKind, EventOperations
+from git_manager.web.api_client import ApiClient, ApiResponseError
 from git_manager.web.auth import Access
-from git_manager.web.events import EVENTS_PATH, event_frame, events_router
+from git_manager.web.events import (
+    EVENTS_PATH,
+    HttpEventOperations,
+    SseFrame,
+    event_frame,
+    events_router,
+    sse_frames,
+)
 from tests.conftest import AUTH_HEADERS, START
 
 EVENTS = (
@@ -121,3 +130,68 @@ def test_needs_a_token_with_the_read_scope() -> None:
     assert forbidden.status_code == 403
     assert "read" in forbidden.json()["detail"]
     assert operations.calls == []
+
+
+async def lines_of(text: str) -> AsyncGenerator[str]:
+    for line in text.split("\n"):
+        yield line
+
+
+async def test_sse_frames_join_data_and_skip_comments_and_partial_frames() -> None:
+    body = (
+        ": ping - 2026-01-05\n\n"
+        "id: 7\ndata: first\ndata: second\nretry: 100\n\n"
+        "event: no-data\n\n"
+        "data:no space\n\n"
+        "id: 9\ndata: cut off"
+    )
+
+    frames = [frame async for frame in sse_frames(lines_of(body))]
+
+    assert frames == [SseFrame(id="7", data="first\nsecond"), SseFrame(id=None, data="no space")]
+
+
+def sse_body(events: tuple[Event, ...]) -> str:
+    return "".join(
+        f": ping\r\n\r\nid: {item.id}\r\ndata: {item.model_dump_json()}\r\n\r\n" for item in events
+    )
+
+
+async def test_http_event_operations_parse_the_stream_and_send_last_event_id() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200, text=sse_body(EVENTS), headers={"content-type": "text/event-stream"}
+        )
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        operations: EventOperations = HttpEventOperations(ApiClient(client))
+        received = [item async for item in operations.stream(after=3)]
+
+    assert received == list(EVENTS)
+    assert requests[0].url.path == EVENTS_PATH
+    assert requests[0].headers["Last-Event-ID"] == "3"
+
+
+async def test_http_event_operations_send_no_last_event_id_without_after() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text="")
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert [item async for item in HttpEventOperations(ApiClient(client)).stream()] == []
+
+    assert "Last-Event-ID" not in requests[0].headers
+
+
+async def test_a_frame_that_is_not_an_event_raises_api_response_error() -> None:
+    transport = httpx.MockTransport(lambda _request: httpx.Response(200, text="data: {}\n\n"))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with pytest.raises(ApiResponseError, match="unexpected event in the stream"):
+            [item async for item in HttpEventOperations(ApiClient(client)).stream()]

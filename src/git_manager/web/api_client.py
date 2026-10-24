@@ -1,6 +1,6 @@
 """The REST API's client side: requests, and errors mapped back from responses."""
 
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
 
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -116,6 +116,30 @@ class ApiClient:
     async def delete(self, path: str) -> None:
         """DELETE ``path``; the response has no body."""
         await self._send("DELETE", path)
+
+    async def stream_lines(
+        self, path: str, *, headers: Mapping[str, str] | None = None
+    ) -> AsyncGenerator[str]:
+        """GET ``path`` and yield its body line by line as it arrives.
+
+        The read timeout is lifted, since a quiet stream is not a dead one; the client's
+        connect timeout still applies. Close the generator to leave the stream.
+        """
+        timeouts = self._client.timeout
+        streaming = httpx.Timeout(
+            connect=timeouts.connect, read=None, write=timeouts.write, pool=timeouts.pool
+        )
+        try:
+            async with self._client.stream(
+                "GET", path, headers=headers, timeout=streaming
+            ) as response:
+                if response.is_error:
+                    await response.aread()
+                    _raise_for(response)
+                async for line in response.aiter_lines():
+                    yield line
+        except httpx.TransportError as error:
+            raise ApiUnreachableError(str(error) or type(error).__name__) from error
 
     async def _send(
         self,

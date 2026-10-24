@@ -12,6 +12,7 @@ from git_manager.events.desktop import (
     desktop_notifier,
     notify_send_argv,
     osascript_argv,
+    session_environment,
 )
 from git_manager.runtime import Command, ProcessCompleted, ProcessResult, ProcessTimedOut
 from tests.conftest import FakeProcessRunner
@@ -106,3 +107,32 @@ def test_platforms_without_a_desktop_notifier_get_none(
     process_runner: FakeProcessRunner, tmp_path: Path
 ) -> None:
     assert desktop_notifier("win32", runner=process_runner, cwd=tmp_path) is None
+
+
+async def test_notify_send_gets_only_the_desktop_session_variables(
+    process_runner: FakeProcessRunner, tmp_path: Path
+) -> None:
+    environ = {
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        "DISPLAY": ":0",
+        "GH_TOKEN": "secret",
+        "GM_TARGET__TOKEN": "secret",
+    }
+    notifier = desktop_notifier("linux", runner=process_runner, cwd=tmp_path, environ=environ)
+    assert notifier is not None
+
+    await notifier.notify(HOSTILE)
+
+    assert dict(process_runner.commands[0].env) == {
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        "DISPLAY": ":0",
+    }
+
+
+def test_session_environment_keeps_only_the_session_variables() -> None:
+    environ = {"WAYLAND_DISPLAY": "wayland-0", "XDG_RUNTIME_DIR": "/run/user/1", "HOME": "/h"}
+
+    assert session_environment(environ) == {
+        "WAYLAND_DISPLAY": "wayland-0",
+        "XDG_RUNTIME_DIR": "/run/user/1",
+    }

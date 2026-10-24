@@ -2,17 +2,12 @@
 
 import httpx
 
-from git_manager.core.unavailable import UnavailableEvents
 from git_manager.web.api_client import ApiClient
 from git_manager.web.branches import HttpBranchOperations
 from git_manager.web.config import HttpConfigOperations
+from git_manager.web.events import HttpEventOperations
 from git_manager.web.health import HttpHealthOperations
 from git_manager.web.runs import HttpRunOperations
-
-NO_SSE_CLIENT_YET = (
-    "the event stream has no API client yet (git-manager watch, F12b); "
-    "run it in local mode with --config"
-)
 
 
 class HttpOperations:
@@ -28,5 +23,4 @@ class HttpOperations:
         self.config = HttpConfigOperations(api)
         self.branches = HttpBranchOperations(api)
         self.runs = HttpRunOperations(api)
-        # The SSE client lands with ``git-manager watch`` (F12b).
-        self.events = UnavailableEvents(NO_SSE_CLIENT_YET)
+        self.events = HttpEventOperations(api)

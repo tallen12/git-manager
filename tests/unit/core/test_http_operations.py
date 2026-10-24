@@ -1,7 +1,6 @@
 import httpx
-import pytest
 
-from git_manager.core import HttpOperations, NotFoundError, Operations, UnavailableError
+from git_manager.core import HttpOperations, NotFoundError, Operations
 from git_manager.health import HealthStatus
 
 
@@ -53,8 +52,17 @@ async def test_every_domain_goes_through_the_api() -> None:
     ]
 
 
-async def test_the_event_stream_is_not_in_the_api_client_yet() -> None:
-    async with httpx.AsyncClient(base_url="http://test") as client:
-        operations = HttpOperations(client)
-        with pytest.raises(UnavailableError, match="local mode"):
-            operations.events.stream()
+async def test_the_event_stream_goes_through_the_api() -> None:
+    paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        paths.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, text="")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://test"
+    ) as client:
+        events = [event async for event in HttpOperations(client).events.stream()]
+
+    assert events == []
+    assert paths == ["GET /api/v1/events"]

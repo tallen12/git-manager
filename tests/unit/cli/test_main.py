@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import pytest
+from cyclopts import App
 
-from git_manager.cli.main import build_app
+from git_manager.cli.main import build_app, run
 from git_manager.core import (
     ApiResponseError,
     HttpTarget,
@@ -327,3 +328,16 @@ def test_url_flag_uses_a_standalone_settings_file_plain_http_policy(service: Ope
     assert [
         target.plain_http for target in connector.targets if isinstance(target, HttpTarget)
     ] == [PlainHttp.ALLOWED]
+
+
+def test_ctrl_c_exits_130_without_a_traceback() -> None:
+    app = App(name="git-manager")
+
+    @app.meta.default
+    def launch() -> None:
+        raise KeyboardInterrupt
+
+    with pytest.raises(SystemExit) as exited:
+        run(app, [])
+
+    assert exited.value.code == 130

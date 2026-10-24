@@ -5,6 +5,7 @@ message are passed as separate arguments, never spliced into a script or shell l
 a branch name cannot inject AppleScript or shell syntax.
 """
 
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import assert_never
@@ -16,6 +17,9 @@ from git_manager.runtime.models import Command, ProcessCompleted, ProcessTimedOu
 from git_manager.runtime.protocols import ProcessRunner
 
 NOTIFY_TIMEOUT = timedelta(seconds=10)
+# What notify-send needs to reach the desktop session's notification daemon. Runners
+# scrub the environment, so these are passed on purpose; none is a credential.
+SESSION_VARIABLES = ("DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR")
 # ``on run argv`` reads the title and message from the arguments after the script.
 _OSASCRIPT_SCRIPT = (
     "on run argv",
@@ -36,8 +40,19 @@ def notify_send_argv(notification: Notification) -> tuple[str, ...]:
     return ("notify-send", "--", notification.title, notification.message)
 
 
-async def _show(runner: ProcessRunner, argv: tuple[str, ...], *, cwd: Path) -> None:
-    command = Command(argv=argv, cwd=cwd, timeout=NOTIFY_TIMEOUT)
+def session_environment(environ: Mapping[str, str]) -> dict[str, str]:
+    """The desktop session variables from ``environ`` that a notifier needs."""
+    return {name: environ[name] for name in SESSION_VARIABLES if name in environ}
+
+
+async def _show(
+    runner: ProcessRunner,
+    argv: tuple[str, ...],
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    command = Command(argv=argv, cwd=cwd, env=env or {}, timeout=NOTIFY_TIMEOUT)
     try:
         result = await runner.run(command)
     except OSError as error:
@@ -68,24 +83,39 @@ class OsascriptNotifier:
 
 
 class NotifySendNotifier:
-    """``Notifier`` showing freedesktop notifications through ``notify-send``."""
+    """``Notifier`` showing freedesktop notifications through ``notify-send``.
 
-    def __init__(self, *, runner: ProcessRunner, cwd: Path) -> None:
+    ``env`` carries the desktop session's variables (``session_environment``); without
+    the D-Bus address notify-send cannot reach the notification daemon.
+    """
+
+    def __init__(
+        self, *, runner: ProcessRunner, cwd: Path, env: Mapping[str, str] | None = None
+    ) -> None:
         self._runner = runner
         self._cwd = cwd
+        self._env = dict(env or {})
 
     async def notify(self, notification: Notification) -> None:
-        await _show(self._runner, notify_send_argv(notification), cwd=self._cwd)
+        await _show(self._runner, notify_send_argv(notification), cwd=self._cwd, env=self._env)
 
 
-def desktop_notifier(platform: str, *, runner: ProcessRunner, cwd: Path) -> Notifier | None:
+def desktop_notifier(
+    platform: str,
+    *,
+    runner: ProcessRunner,
+    cwd: Path,
+    environ: Mapping[str, str] | None = None,
+) -> Notifier | None:
     """The desktop notifier for ``platform`` (a ``sys.platform`` value), if there is one.
 
-    Only composition roots call this, passing ``sys.platform``. ``None`` means this
-    platform has no desktop notifier yet (Windows toast is not built).
+    Only composition roots call this, passing ``sys.platform`` and ``os.environ``, from
+    which only the desktop session variables are kept. ``None`` means this platform has
+    no desktop notifier yet (Windows toast is not built).
     """
     if platform == "darwin":
         return OsascriptNotifier(runner=runner, cwd=cwd)
     if platform.startswith("linux"):
-        return NotifySendNotifier(runner=runner, cwd=cwd)
+        env = session_environment(environ or {})
+        return NotifySendNotifier(runner=runner, cwd=cwd, env=env)
     return None
