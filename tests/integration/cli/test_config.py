@@ -10,6 +10,7 @@ from git_manager.core import LocalTarget, Operations, Service, build_connector
 from git_manager.core.unavailable import UnavailableBranches, UnavailableRuns
 from git_manager.health import HealthReporter, HealthService
 from tests.conftest import TEST_VERSION, run_cli
+from tests.unit.cli.conftest import no_runtime
 
 
 def test_show_and_validate_read_the_same_layers(
@@ -44,7 +45,10 @@ def test_show_and_validate_read_the_same_layers(
         )
 
     app = build_app(
-        read_config=read_config, connect=build_connector(local=local), version=TEST_VERSION
+        open_runtime=no_runtime,
+        read_config=read_config,
+        connect=build_connector(local=local),
+        version=TEST_VERSION,
     )
     monkeypatch.setenv("GM_TARGET__CONFIG", str(config_file))
 

@@ -62,11 +62,19 @@ class Poller:
             if poll_due(
                 self._watches.get(branch.id), interval=options.poll_interval, now=self._now()
             ):
-                observations.append(await self._poll(branch, options))
+                observation = await self._poll(branch, options)
+                if observation is not None:
+                    observations.append(observation)
         return observations
 
-    async def _poll(self, branch: TrackedBranch, options: BranchOptions) -> Observation:
-        remote = await self._git.ls_remote([branch.base, branch.name])
+    async def _poll(self, listed: TrackedBranch, options: BranchOptions) -> Observation | None:
+        remote = await self._git.ls_remote([listed.base, listed.name])
+        # A run may have pushed or changed state during ``ls-remote``: judge (and write)
+        # the stored branch, not the listed copy, so its push is recognized as ours and
+        # its state is not overwritten.
+        branch = await self._branches.get(listed.id)
+        if branch is None:
+            return None
         observation = observe(
             branch,
             remote=remote,

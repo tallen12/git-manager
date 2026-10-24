@@ -2,7 +2,7 @@
 
 import builtins
 from collections.abc import Sequence
-from contextlib import nullcontext
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,7 +13,14 @@ from git_manager.branches import BranchState, Reason, RepoStatus, TrackedBranch
 from git_manager.branches.results import SyncCompleted, SyncOutcome
 from git_manager.cli.main import build_app
 from git_manager.config import YamlConfigFile
-from git_manager.core import NotFoundError, Service, UnavailableError, build_connector
+from git_manager.core import (
+    LocalTarget,
+    NotFoundError,
+    Service,
+    UnavailableError,
+    build_connector,
+)
+from git_manager.core.compose import LocalRuntime
 from git_manager.core.unavailable import UnavailableConfig
 from git_manager.health import HealthStatus
 from git_manager.rebasing import Run
@@ -96,6 +103,12 @@ class FakeRunOperations:
         return (await self.get(run_id)).tests
 
 
+def no_runtime(target: LocalTarget) -> AbstractAsyncContextManager[LocalRuntime]:
+    """A ``RuntimeOpener`` for tests that never start ``serve``."""
+    msg = f"serve is not started in this test: {target.config}"
+    raise AssertionError(msg)
+
+
 def operations_app(
     *, branches: FakeBranchOperations | None = None, runs: FakeRunOperations | None = None
 ) -> App:
@@ -108,6 +121,7 @@ def operations_app(
         runs=runs or FakeRunOperations(),
     )
     return build_app(
+        open_runtime=no_runtime,
         read_config=read_config,
         connect=build_connector(local=lambda _target: nullcontext(service)),
         version=TEST_VERSION,

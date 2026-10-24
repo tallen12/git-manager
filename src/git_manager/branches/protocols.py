@@ -2,11 +2,14 @@
 
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from datetime import timedelta
 from typing import Protocol
 
 from git_manager.branches.models import CommitSha, RepoStatus, TrackedBranch
+from git_manager.branches.polling import Observation
 from git_manager.branches.results import SyncOutcome
 from git_manager.branches.runs import QueuedRun
+from git_manager.config.models import RepoConfig
 from git_manager.rebasing.models import RunTrigger
 
 
@@ -85,4 +88,20 @@ class BranchSyncer(Protocol):
 
     async def sync(self, branch: TrackedBranch) -> SyncOutcome:
         """Start a manual run of ``branch``, which is tracked and not paused."""
+        ...
+
+
+class BranchPoller(Protocol):
+    """Polls the tracked branches that are due and feeds the run queue (``Poller``)."""
+
+    async def tick(self, config: RepoConfig) -> Sequence[Observation]:
+        """Poll every tracked branch whose ``poll_interval`` has passed under ``config``."""
+        ...
+
+
+class Sleeper(Protocol):
+    """Waits for time to pass; the daemon's only way to wait, so tests never really sleep."""
+
+    async def sleep(self, delay: timedelta) -> None:
+        """Return once ``delay`` has passed."""
         ...

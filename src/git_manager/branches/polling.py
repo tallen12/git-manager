@@ -2,6 +2,10 @@
 
 The poller remembers what it last saw of each branch in a ``Watch``. That memory lives
 in the process: after a restart the first poll counts any base change as made then.
+
+Git Manager's own pushes are not human pushes: a run records the head it pushed as
+``last_head_sha``, so a remote head that matches a ``last_head_sha`` changed since the
+previous poll is ours and is not reported as ``head_moved``.
 """
 
 from collections.abc import Mapping
@@ -63,6 +67,8 @@ class Watch:
     # When the remote base first showed ``base_sha``: the start of the quiet period.
     base_changed_at: datetime
     polled_at: datetime
+    # The branch's ``last_head_sha`` at that poll; a change since means a run pushed.
+    recorded_head_sha: CommitSha
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,8 +154,9 @@ def observe(
 
     Base movement is measured against ``last_base_sha`` (what the branch sits on) and
     reported once per new hash; feature-branch movement is reported once per new hash
-    against ``last_head_sha``. Only ready states change state or touch the queue, and
-    only while the feature branch exists on the remote.
+    against ``last_head_sha``, except a push of Git Manager's own (see the module doc).
+    Only ready states change state or touch the queue, and only while the feature branch
+    exists on the remote.
     """
     base = remote.get(branch.base)
     head = remote.get(branch.name)
@@ -157,12 +164,23 @@ def observe(
     seen_head = watch.head_sha if watch is not None else branch.last_head_sha
     base_is_new = watch is not None and base != watch.base_sha
     base_changed_at = watch.base_changed_at if watch is not None and not base_is_new else now
-    new_watch = Watch(base_sha=base, head_sha=head, base_changed_at=base_changed_at, polled_at=now)
+    new_watch = Watch(
+        base_sha=base,
+        head_sha=head,
+        base_changed_at=base_changed_at,
+        polled_at=now,
+        recorded_head_sha=branch.last_head_sha,
+    )
+    own_push = (
+        watch is not None
+        and branch.last_head_sha != watch.recorded_head_sha
+        and head == branch.last_head_sha
+    )
 
     events: list[EventDraft] = []
     if base != seen_base:
         events.append(_moved(EventKind.BASE_MOVED, branch, seen_base, base))
-    if head != seen_head:
+    if head != seen_head and not own_push:
         events.append(_moved(EventKind.HEAD_MOVED, branch, seen_head, head))
 
     state, reason, queue = branch.state, branch.reason, LeaveQueue()

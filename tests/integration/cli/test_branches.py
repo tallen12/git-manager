@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from cyclopts import App
 
-from git_manager.cli.main import build_app, local_connector
+from git_manager.cli.main import build_app, local_connector, local_runtime
 from git_manager.config import CheckoutRepoConfig, YamlConfigFile
 from git_manager.store import FileDataDirectoryLock
 from tests.conftest import TEST_VERSION, run_cli
@@ -24,7 +24,10 @@ def app() -> App:
         return YamlConfigFile(path, environ=environ, repo_config=repo_config)
 
     connect = local_connector(environ=environ, repo_config=repo_config, version=TEST_VERSION)
-    return build_app(connect=connect, read_config=read_config, version=TEST_VERSION)
+    open_runtime = local_runtime(environ=environ, repo_config=repo_config, version=TEST_VERSION)
+    return build_app(
+        connect=connect, open_runtime=open_runtime, read_config=read_config, version=TEST_VERSION
+    )
 
 
 def test_track_sync_and_inspect_the_run(

@@ -8,8 +8,9 @@ infrastructure. The daemon reuses it and adds its poller and run queue on top.
 import asyncio
 import shlex
 from collections.abc import AsyncGenerator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from typing import Protocol
 
 from git_manager.approvals.gate import UnrecordedApprovalGate
 from git_manager.branches.service import BranchService
@@ -76,6 +77,12 @@ class LocalRuntime:
     events: EventBus
     executor: RunExecutor
     clock: Clock
+
+
+class RuntimeOpener(Protocol):
+    """Opens a ``LocalRuntime`` for a target, like ``open_local`` with its options bound."""
+
+    def __call__(self, target: LocalTarget) -> AbstractAsyncContextManager[LocalRuntime]: ...
 
 
 def process_runner(environ: Mapping[str, str]) -> ProcessRunner:

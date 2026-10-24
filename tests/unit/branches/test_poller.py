@@ -231,3 +231,74 @@ def test_branch_options_prefer_the_branch_block() -> None:
 
     assert branch_options(repo, "feature/one").poll_interval == timedelta(seconds=5)
     assert branch_options(repo, "other") == repo.defaults
+
+
+@dataclass(slots=True)
+class RunDuringLsRemote:
+    """``RemoteRefs`` during whose call a run takes the branch and pushes ``pushed``."""
+
+    remote: FakeGit
+    branches: InMemoryBranches
+    pushed: str
+
+    async def ls_remote(self, refs: Sequence[str]) -> Mapping[str, str]:
+        branch = self.branches.rows["branch-1"]
+        self.branches.rows["branch-1"] = branch.model_copy(
+            update={
+                "state": BranchState.REBASING,
+                "last_base_sha": NEW_BASE,
+                "last_head_sha": self.pushed,
+            }
+        )
+        self.remote.remote["feature/one"] = self.pushed
+        return await self.remote.ls_remote(refs)
+
+
+async def test_a_run_that_starts_during_a_poll_is_not_overwritten(
+    remote: FakeGit,
+    branches: InMemoryBranches,
+    event_sink: RecordingEventSink,
+    queue: FifoRunQueue,
+    clock: FixedClock,
+) -> None:
+    # The listed copy is scheduled; by the time ls-remote answers, a run owns the branch.
+    branches.rows["branch-1"] = make_branch(state=BranchState.SCHEDULED)
+    remote.remote["main"] = OLD_BASE
+    poller = Poller(
+        git=RunDuringLsRemote(remote, branches, pushed=sha(9)),
+        branches=branches,
+        events=event_sink,
+        queue=queue,
+        clock=clock,
+    )
+
+    await poller.tick(config(CadenceMode.IMMEDIATE))
+
+    branch = branches.rows["branch-1"]
+    assert (branch.state, branch.last_head_sha) == (BranchState.REBASING, sha(9))
+    assert EventKind.HEAD_MOVED not in [event.kind for event in event_sink.events]
+
+
+async def test_a_branch_untracked_during_a_poll_is_skipped(
+    remote: FakeGit,
+    branches: InMemoryBranches,
+    event_sink: RecordingEventSink,
+    queue: FifoRunQueue,
+    clock: FixedClock,
+) -> None:
+    @dataclass(slots=True)
+    class UntrackDuringLsRemote:
+        async def ls_remote(self, refs: Sequence[str]) -> Mapping[str, str]:
+            await branches.remove("branch-1")
+            return await remote.ls_remote(refs)
+
+    poller = Poller(
+        git=UntrackDuringLsRemote(),
+        branches=branches,
+        events=event_sink,
+        queue=queue,
+        clock=clock,
+    )
+
+    assert await poller.tick(config()) == []
+    assert event_sink.events == []

@@ -33,9 +33,13 @@ def remote(base: str | None = OLD_BASE, head: str | None = HEAD) -> dict[str, st
     return {name: value for name, value in refs.items() if value is not None}
 
 
-def watch(base: str | None = OLD_BASE, head: str | None = HEAD, *, minutes: int = 0) -> Watch:
+def watch(
+    base: str | None = OLD_BASE, head: str | None = HEAD, *, minutes: int = 0, recorded: str = HEAD
+) -> Watch:
     at = START + timedelta(minutes=minutes)
-    return Watch(base_sha=base, head_sha=head, base_changed_at=at, polled_at=at)
+    return Watch(
+        base_sha=base, head_sha=head, base_changed_at=at, polled_at=at, recorded_head_sha=recorded
+    )
 
 
 def kinds(observation: Observation) -> list[EventKind]:
@@ -293,7 +297,7 @@ def test_a_deleted_base_in_a_stop_state_is_only_recorded() -> None:
 
 def test_a_stop_state_left_by_a_human_picks_up_the_recorded_change() -> None:
     # Recorded while needs_human 30 minutes ago; resumed to idle since.
-    recorded = Watch(base_sha=NEW_BASE, head_sha=HEAD, base_changed_at=START, polled_at=START)
+    recorded = watch(NEW_BASE)
 
     observation = observe(
         make_branch(),
@@ -378,3 +382,42 @@ def test_tests_failed_stays_when_the_base_moves_back() -> None:
     )
 
     assert (observation.state, observation.queue) == (BranchState.TESTS_FAILED, LeaveQueue())
+
+
+def test_own_push_is_not_a_head_move() -> None:
+    # A run pushed NEW_HEAD and recorded it since the last poll.
+    pushed = make_branch(last_base_sha=NEW_BASE, last_head_sha=NEW_HEAD)
+
+    observation = observe(
+        pushed,
+        remote=remote(NEW_BASE, NEW_HEAD),
+        watch=watch(NEW_BASE),
+        cadence=IMMEDIATE,
+        now=START,
+    )
+
+    assert kinds(observation) == []
+    assert observation.watch.recorded_head_sha == NEW_HEAD
+
+
+def test_human_push_to_the_recorded_head_is_a_head_move() -> None:
+    # A human moved the branch away (already reported) and then back to the recorded head.
+    observation = observe(
+        make_branch(), remote=remote(), watch=watch(head=NEW_HEAD), cadence=IMMEDIATE, now=START
+    )
+
+    assert kinds(observation) == [EventKind.HEAD_MOVED]
+
+
+def test_human_push_after_own_push_is_a_head_move() -> None:
+    pushed = make_branch(last_base_sha=NEW_BASE, last_head_sha=NEW_HEAD)
+
+    observation = observe(
+        pushed,
+        remote=remote(NEW_BASE, sha(9)),
+        watch=watch(NEW_BASE),
+        cadence=IMMEDIATE,
+        now=START,
+    )
+
+    assert [event.data for event in observation.events] == [{"from": HEAD, "to": sha(9)}]

@@ -56,6 +56,9 @@ services:
       - ./config.yaml:/etc/git-manager/config.yaml:ro
     secrets: [deploy_key, claude_oauth_token]
     restart: unless-stopped
+    # On stop the daemon lets the current run finish (verify.timeout defaults to 30m per
+    # command); only a run still going after this is killed. See Shutdown in the spec.
+    stop_grace_period: 45m
 
 secrets:
   deploy_key:

@@ -12,7 +12,7 @@ from git_manager.core import LocalTarget, Operations, Service, build_connector
 from git_manager.core.unavailable import UnavailableBranches, UnavailableRuns
 from git_manager.health import HealthReporter, HealthService
 from tests.conftest import TEST_VERSION, run_cli
-from tests.unit.cli.conftest import read_config
+from tests.unit.cli.conftest import no_runtime, read_config
 
 CONFIG = "repo:\n  url: u\nbranches:\n  - name: a\n    base: main\n"
 
@@ -33,7 +33,10 @@ def app(reporter: HealthReporter) -> App:
         )
 
     return build_app(
-        read_config=read_config, connect=build_connector(local=local), version=TEST_VERSION
+        open_runtime=no_runtime,
+        read_config=read_config,
+        connect=build_connector(local=local),
+        version=TEST_VERSION,
     )
 
 
@@ -84,6 +87,7 @@ def test_show_reports_an_unavailable_api(
     service: Operations, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     app = build_app(
+        open_runtime=no_runtime,
         read_config=read_config,
         connect=build_connector(local=lambda _target: nullcontext(service)),
         version=TEST_VERSION,

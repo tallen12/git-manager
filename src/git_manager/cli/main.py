@@ -4,7 +4,7 @@ import inspect
 import os
 import sys
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -28,7 +28,7 @@ from git_manager.core import (
     SocketTarget,
     build_connector,
 )
-from git_manager.core.compose import open_local, process_runner
+from git_manager.core.compose import LocalRuntime, RuntimeOpener, open_local, process_runner
 from git_manager.metadata import package_version
 
 # Exit status for invalid settings, matching cyclopts' own usage errors.
@@ -71,12 +71,19 @@ def _settings(flags: Settings | None) -> Settings:
         _usage_error(error)
 
 
-def build_app(*, connect: Connector, read_config: ConfigReader, version: str) -> App:
+def build_app(
+    *,
+    connect: Connector,
+    open_runtime: RuntimeOpener,
+    read_config: ConfigReader,
+    version: str,
+) -> App:
     """Build the CLI around injected capabilities.
 
     The target flags belong to the meta app, so they apply to every command. Commands
     that need a target declare ``settings`` with ``parse=False`` and receive the
-    validated ``Settings``; ``connect`` opens the operations for its target, and
+    validated ``Settings``; ``connect`` opens the operations for its target,
+    ``open_runtime`` opens a local target's whole runtime for ``serve``, and
     ``read_config`` opens a config file directly for process-level commands.
     """
     app = App(name="git-manager", help="Keep git branches rebased.", version=version)
@@ -85,7 +92,7 @@ def build_app(*, connect: Connector, read_config: ConfigReader, version: str) ->
     config.register(app, connect=connect, read_config=read_config)
     branches.register(app, connect=connect)
     runs.register(app, connect=connect)
-    server.register(app, connect=connect, version=version)
+    server.register(app, connect=connect, open_runtime=open_runtime, version=version)
 
     @app.meta.default
     async def launch(
@@ -113,21 +120,32 @@ def run(app: App, tokens: Sequence[str] | None = None) -> None:
         sys.exit(_USAGE_ERROR)
 
 
-def local_connector(
+def local_runtime(
     *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
-) -> Connector:
-    """The connector ``main`` uses: local mode through ``open_local``, API mode over httpx."""
+) -> RuntimeOpener:
+    """Open a local target through ``open_local`` with this process's runner."""
 
-    @asynccontextmanager
-    async def local(target: LocalTarget) -> AsyncGenerator[Operations]:
-        runtime = open_local(
+    def open_runtime(target: LocalTarget) -> AbstractAsyncContextManager[LocalRuntime]:
+        return open_local(
             target,
             environ=environ,
             repo_config=repo_config,
             runner=process_runner(environ),
             version=version,
         )
-        async with runtime as opened:
+
+    return open_runtime
+
+
+def local_connector(
+    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
+) -> Connector:
+    """The connector ``main`` uses: local mode through ``open_local``, API mode over httpx."""
+    open_runtime = local_runtime(environ=environ, repo_config=repo_config, version=version)
+
+    @asynccontextmanager
+    async def local(target: LocalTarget) -> AsyncGenerator[Operations]:
+        async with open_runtime(target) as opened:
             yield opened.service
 
     return build_connector(local=local)
@@ -142,4 +160,9 @@ def main() -> None:
         return YamlConfigFile(path, environ=os.environ, repo_config=repo_config)
 
     connect = local_connector(environ=os.environ, repo_config=repo_config, version=version)
-    run(build_app(connect=connect, read_config=read_config, version=version))
+    open_runtime = local_runtime(environ=os.environ, repo_config=repo_config, version=version)
+    run(
+        build_app(
+            connect=connect, open_runtime=open_runtime, read_config=read_config, version=version
+        )
+    )
