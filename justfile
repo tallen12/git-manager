@@ -6,6 +6,14 @@ default:
 setup:
     uv sync --locked
 
+# Install the git hooks from .pre-commit-config.yaml (once per clone).
+hooks:
+    uvx pre-commit@4.7.0 install
+
+# Run every git hook against all files.
+hooks-run:
+    uvx pre-commit@4.7.0 run --all-files
+
 # Format Python code.
 format:
     uv run ruff format .

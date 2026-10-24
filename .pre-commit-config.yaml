@@ -1,0 +1,22 @@
+# Git hooks run by pre-commit. Install them once per clone with `just hooks`.
+# Run every hook against the whole tree with `just hooks-run`.
+repos:
+  # Blocks commits that contain credentials (tokens, keys, passwords in URLs).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # Ruff through uv, so the hook uses the locked version, as `just lint` does.
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
