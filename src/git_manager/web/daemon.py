@@ -64,14 +64,26 @@ def stop_on_signals(
             signal.signal(number, handler)
 
 
-async def run_until_stopped(daemon: Stoppable, servers: Sequence[Server]) -> None:
+async def run_until_stopped(
+    daemon: Stoppable,
+    servers: Sequence[Server],
+    *,
+    on_stop: Sequence[Callable[[], None]] = (),
+) -> None:
     """Run the daemon and every server until any ends; then stop the rest and wait.
 
     A stop signal ends the servers first (uvicorn handles it); the daemon then finishes its
     current run. A daemon that fails takes the servers down with it. The first error is
-    raised once all have ended.
+    raised once all have ended. Each of ``on_stop`` is called whenever the daemon is told
+    to stop, e.g. to end open event streams, which would otherwise keep a server serving.
     """
-    with stop_on_signals(daemon.stop):
+
+    def stop() -> None:
+        daemon.stop()
+        for callback in on_stop:
+            callback()
+
+    with stop_on_signals(stop):
         tasks = [
             asyncio.create_task(daemon.run(), name="git-manager-daemon"),
             *(
@@ -82,7 +94,7 @@ async def run_until_stopped(daemon: Stoppable, servers: Sequence[Server]) -> Non
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            daemon.stop()
+            stop()
             for server in servers:
                 server.should_exit = True
             await asyncio.wait(tasks)
@@ -118,4 +130,4 @@ async def serve_daemon(
         tick=tick,
     )
     with rest_servers(operations=runtime.service, http=http, version=version) as servers:
-        await run_until_stopped(daemon, servers)
+        await run_until_stopped(daemon, servers, on_stop=[runtime.events.close])

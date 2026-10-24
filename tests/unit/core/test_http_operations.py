@@ -30,3 +30,10 @@ async def test_operations_not_in_the_api_yet_point_to_local_mode() -> None:
         operations = HttpOperations(client)
         with pytest.raises(UnavailableError, match="local mode"):
             await operations.branches.status()
+
+
+async def test_the_event_stream_is_not_in_the_api_client_yet() -> None:
+    async with httpx.AsyncClient(base_url="http://test") as client:
+        operations = HttpOperations(client)
+        with pytest.raises(UnavailableError, match="local mode"):
+            operations.events.stream()

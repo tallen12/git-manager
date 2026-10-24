@@ -83,7 +83,7 @@ IDs are stable; use them in branch names and session titles.
 | --- | --- | --- | --- |
 | F6 | API auth and scopes | C0 | M2 types, tokens file, `read` / `operate` / `approve` scopes, FastAPI dependency, Unix socket listener with `gm-admin` group, `sse-starlette` |
 | F11 | REST mirror | F10a, F6 | `/api/v1` routes for every operation, `HttpOperations` for them, typed error mapping (`403`, `409 stale`, validation), contract tests shared by both implementations |
-| F12 | SSE and `watch --notify` | F5, F11 | `GET /api/v1/events`, `git-manager watch`, desktop notifier adapters (`osascript`, `notify-send`) behind a protocol. **Ends M2** |
+| F12 | SSE and `watch --notify` | F5, F11 | `GET /api/v1/events`, `git-manager watch`, desktop notifier adapters (`osascript`, `notify-send`) behind a protocol. Split so it can start before F11: F12a (endpoint, `EventOperations` stream, notifiers) needs only F5; F12b (`watch` and the HTTP SSE client) needs F11. **Ends M2** |
 
 ### Wave 5: M3 contracts and building blocks
 

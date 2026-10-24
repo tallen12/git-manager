@@ -16,6 +16,7 @@ from git_manager.approvals import (
 )
 from git_manager.core import Connector, Operations, Target
 from git_manager.web.auth import Access
+from git_manager.web.events import events_router
 from git_manager.web.health import health_router
 from git_manager.web.listeners import unix_listener
 from git_manager.web.settings import HttpSettings
@@ -32,6 +33,7 @@ def create_app(*, operations: Operations, version: str, authenticator: Authentic
     access = Access(authenticator)
     # One router per domain; each mirrors that domain's operations protocol.
     app.include_router(health_router(operations.health, access=access))
+    app.include_router(events_router(operations.events, access=access))
     return app
 
 

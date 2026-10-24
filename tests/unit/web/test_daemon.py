@@ -86,3 +86,31 @@ async def test_a_failing_daemon_takes_the_server_down() -> None:
         await asyncio.wait_for(run_until_stopped(daemon, [server]), timeout=5)
 
     assert server.should_exit
+
+
+async def test_stopping_calls_each_on_stop_callback() -> None:
+    daemon, server = FakeDaemon(), FakeServer(finite=True)
+    calls: list[str] = []
+
+    await asyncio.wait_for(
+        run_until_stopped(daemon, [server], on_stop=[lambda: calls.append("close events")]),
+        timeout=5,
+    )
+
+    assert calls
+    assert set(calls) == {"close events"}
+
+
+async def test_a_stop_signal_calls_on_stop() -> None:
+    daemon, server = FakeDaemon(), FakeServer()
+    calls: list[str] = []
+    task = asyncio.create_task(
+        run_until_stopped(daemon, [server], on_stop=[lambda: calls.append("close events")])
+    )
+    await asyncio.sleep(0)
+
+    signal.raise_signal(signal.SIGTERM)
+    server.should_exit = True
+    await asyncio.wait_for(task, timeout=5)
+
+    assert "close events" in calls

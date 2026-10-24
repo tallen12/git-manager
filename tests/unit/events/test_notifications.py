@@ -1,14 +1,20 @@
+import logging
+from collections.abc import AsyncIterator
+
 import pytest
 
 from git_manager.branches import BranchState, Reason
 from git_manager.config.models import NotifyConfig, NotifyOn
-from git_manager.events import Event, EventKind
+from git_manager.events import Event, EventKind, Notification
 from git_manager.events.notifications import (
+    NOTIFICATION_TITLE,
+    forward_notifications,
     notification_filter,
+    notification_for,
     notification_topics,
     should_notify,
 )
-from tests.conftest import START
+from tests.conftest import START, RecordingNotifier
 
 
 def event(
@@ -94,3 +100,56 @@ def test_filter_is_a_subscription_predicate() -> None:
 
     assert accept(event(EventKind.PUSHED))
     assert not accept(event(EventKind.STATE_CHANGED, state=BranchState.TESTS_FAILED))
+
+
+@pytest.mark.parametrize(
+    ("happened", "message"),
+    [
+        (event(EventKind.PUSHED), "branch b: pushed"),
+        (
+            event(EventKind.STATE_CHANGED, state=BranchState.NEEDS_HUMAN, reason=Reason.CONFLICT),
+            "branch b: needs_human (conflict)",
+        ),
+        (event(EventKind.STATE_CHANGED, state=BranchState.BASE_MISSING), "branch b: base_missing"),
+        (event(EventKind.TRACKED), "branch b: tracked"),
+    ],
+)
+def test_notification_names_the_branch_and_what_happened(happened: Event, message: str) -> None:
+    assert notification_for(happened) == Notification(title=NOTIFICATION_TITLE, message=message)
+
+
+async def events_of(*events: Event) -> AsyncIterator[Event]:
+    for item in events:
+        yield item
+
+
+async def test_forwarding_shows_only_the_events_notify_on_selects() -> None:
+    notifier = RecordingNotifier()
+    pushed = event(EventKind.PUSHED)
+    failed = event(EventKind.STATE_CHANGED, state=BranchState.TESTS_FAILED)
+
+    await forward_notifications(
+        events_of(event(EventKind.RUN_STARTED), pushed, failed),
+        notifier=notifier,
+        on=[NotifyOn.PUSHED],
+    )
+
+    assert notifier.shown == [notification_for(pushed)]
+
+
+async def test_a_failed_notification_is_logged_and_the_rest_still_shown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    notifier = RecordingNotifier(failing=True)
+    first = event(EventKind.PUSHED)
+
+    async def flaky() -> AsyncIterator[Event]:
+        yield first
+        notifier.failing = False
+        yield first.model_copy(update={"id": 2})
+
+    with caplog.at_level(logging.WARNING):
+        await forward_notifications(flaky(), notifier=notifier, on=tuple(NotifyOn))
+
+    assert len(notifier.shown) == 1
+    assert "event 1" in caplog.text

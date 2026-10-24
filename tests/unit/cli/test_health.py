@@ -7,7 +7,12 @@ from cyclopts import App
 from git_manager.cli import health
 from git_manager.cli.main import build_app
 from git_manager.core import Operations, Service, UnavailableError, build_connector
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
 from tests.unit.cli.conftest import no_runtime, read_config
@@ -42,6 +47,7 @@ def test_doctor_reports_operation_errors_on_one_line(
         config=UnavailableConfig(reason),
         branches=UnavailableBranches(reason),
         runs=UnavailableRuns(reason),
+        events=UnavailableEvents(reason),
     )
 
     config = tmp_path / "config.yaml"

@@ -5,7 +5,7 @@ operations raise ``UnavailableError`` with the reason, instead of being missing 
 ``Operations`` and breaking the shared contract.
 """
 
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from typing import NoReturn
 
@@ -13,6 +13,7 @@ from git_manager.branches.models import RepoStatus, TrackedBranch
 from git_manager.branches.results import SyncOutcome
 from git_manager.config.models import RepoConfig
 from git_manager.errors import UnavailableError
+from git_manager.events.models import Event
 from git_manager.rebasing.models import Run
 from git_manager.verification.models import TestResult
 
@@ -86,3 +87,14 @@ class UnavailableRuns:
     async def tests(self, run_id: str) -> Sequence[TestResult]:
         """Raise ``UnavailableError``."""
         self._fail("logs")
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableEvents:
+    """``EventOperations`` that always raise ``UnavailableError``."""
+
+    reason: str
+
+    def stream(self, *, after: int | None = None) -> AsyncGenerator[Event]:
+        """Raise ``UnavailableError``."""
+        raise UnavailableError("watch", reason=self.reason)

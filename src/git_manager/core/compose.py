@@ -23,6 +23,8 @@ from git_manager.config.service import ConfigService
 from git_manager.core.service import Service
 from git_manager.core.targets import LocalTarget
 from git_manager.events.bus import EventBus
+from git_manager.events.protocols import EventHistory
+from git_manager.events.stream import EventStreamService
 from git_manager.health.reporters import StaticHealthReporter
 from git_manager.health.service import HealthService
 from git_manager.isolation.channel import DEFAULT_SOCKET, UnixSocketSupervisorChannel
@@ -138,6 +140,7 @@ async def open_local(
     clock = SystemClock()
     with held(FileDataDirectoryLock(data_dir)):
         async with open_database(state_db_path(data_dir)) as database:
+            event_log = SqlEventRepository(database)
             git = SubprocessGit(
                 runner=runner, clone=data_dir / CLONE_DIR, env=git_environment(config, environ)
             )
@@ -148,7 +151,8 @@ async def open_local(
                 config_service=ConfigService(store),
                 branches=SqlBranchRepository(database),
                 runs=SqlRunRepository(database),
-                events=EventBus(repository=SqlEventRepository(database), clock=clock),
+                events=EventBus(repository=event_log, clock=clock),
+                event_history=event_log,
                 git=git,
                 runner=runner,
                 clock=clock,
@@ -163,6 +167,7 @@ def _build(
     branches: BranchRepository,
     runs: RunRepository,
     events: EventBus,
+    event_history: EventHistory,
     git: Git,
     runner: ProcessRunner,
     clock: Clock,
@@ -196,6 +201,7 @@ def _build(
             ids=ids,
         ),
         runs=RunService(runs=runs, branches=branches, git=git),
+        events=EventStreamService(source=events, history=event_history),
     )
     return LocalRuntime(
         service=service,

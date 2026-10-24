@@ -15,8 +15,13 @@ from git_manager.branches import BranchHeads, BranchState, TrackedBranch
 from git_manager.cli.main import run
 from git_manager.config import VerifyConfig
 from git_manager.core import ConflictError, NotFoundError, Operations, Service
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
-from git_manager.events import Event, EventDraft
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
+from git_manager.events import Event, EventDraft, Notification, NotificationError
 from git_manager.health import HealthReporter, HealthService, StaticHealthReporter
 from git_manager.rebasing import (
     LeaseRejected,
@@ -283,6 +288,20 @@ class RecordingEventSink:
         return await self.log.append(draft, at=self.clock.now())
 
 
+@dataclass(slots=True)
+class RecordingNotifier:
+    """``Notifier`` that records what it shows; fails instead while ``failing`` is set."""
+
+    shown: builtins.list[Notification] = field(default_factory=builtins.list)
+    failing: bool = False
+
+    async def notify(self, notification: Notification) -> None:
+        if self.failing:
+            msg = "no notification daemon"
+            raise NotificationError(msg)
+        self.shown.append(notification)
+
+
 @dataclass(frozen=True, slots=True)
 class VerifyCall:
     """One call a ``FakeVerifier`` received."""
@@ -379,6 +398,7 @@ def service(reporter: HealthReporter) -> Operations:
         config=UnavailableConfig(reason),
         branches=UnavailableBranches(reason),
         runs=UnavailableRuns(reason),
+        events=UnavailableEvents(reason),
     )
 
 

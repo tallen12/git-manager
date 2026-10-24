@@ -2,7 +2,12 @@
 
 import httpx
 
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
 from git_manager.web.api_client import ApiClient
 from git_manager.web.health import HttpHealthOperations
 
@@ -22,3 +27,5 @@ class HttpOperations:
         self.config = UnavailableConfig(NOT_IN_API_YET)
         self.branches = UnavailableBranches(NOT_IN_API_YET)
         self.runs = UnavailableRuns(NOT_IN_API_YET)
+        # The SSE client lands with ``git-manager watch`` (F12b).
+        self.events = UnavailableEvents(NOT_IN_API_YET)

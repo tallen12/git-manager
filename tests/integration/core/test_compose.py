@@ -7,6 +7,7 @@ import pytest
 from git_manager.config import CheckoutRepoConfig, ConfigError
 from git_manager.core import LocalTarget
 from git_manager.core.compose import LocalRuntime, open_local
+from git_manager.events import EventKind
 from git_manager.isolation import LocalProcessRunner
 from git_manager.store import DataDirectoryLockedError, FileDataDirectoryLock
 from tests.conftest import TEST_VERSION
@@ -75,3 +76,13 @@ async def test_an_invalid_config_takes_no_lock(tmp_path: Path) -> None:
             pass
 
     assert not (tmp_path / "data").exists()
+
+
+async def test_the_event_stream_replays_what_the_service_recorded(config_file: Path) -> None:
+    async with opened(config_file) as runtime:
+        tracked = await runtime.service.branches.track(name="feature/one", base="main")
+        stream = runtime.service.events.stream(after=0)
+        first = await anext(stream)
+        await stream.aclose()
+
+    assert (first.kind, first.branch_id) == (EventKind.TRACKED, tracked.id)

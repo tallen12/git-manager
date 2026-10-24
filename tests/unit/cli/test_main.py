@@ -16,7 +16,12 @@ from git_manager.core import (
     build_connector,
 )
 from git_manager.core.targets import PlainHttp
-from git_manager.core.unavailable import UnavailableBranches, UnavailableConfig, UnavailableRuns
+from git_manager.core.unavailable import (
+    UnavailableBranches,
+    UnavailableConfig,
+    UnavailableEvents,
+    UnavailableRuns,
+)
 from git_manager.health import HealthStatus
 from tests.conftest import TEST_VERSION, run_cli
 from tests.unit.cli.conftest import no_runtime, read_config
@@ -238,6 +243,7 @@ def test_doctor_reports_an_unexpected_response_as_one_line(
         config=UnavailableConfig(reason),
         branches=UnavailableBranches(reason),
         runs=UnavailableRuns(reason),
+        events=UnavailableEvents(reason),
     )
     app = build_app(
         open_runtime=no_runtime,

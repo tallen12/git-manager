@@ -7,7 +7,7 @@ import pytest
 from git_manager.cli.main import build_app
 from git_manager.config import CheckoutRepoConfig, ConfigService, YamlConfigFile
 from git_manager.core import LocalTarget, Operations, Service, build_connector
-from git_manager.core.unavailable import UnavailableBranches, UnavailableRuns
+from git_manager.core.unavailable import UnavailableBranches, UnavailableEvents, UnavailableRuns
 from git_manager.health import HealthReporter, HealthService
 from tests.conftest import TEST_VERSION, run_cli
 from tests.unit.cli.conftest import no_runtime
@@ -41,6 +41,7 @@ def test_show_and_validate_read_the_same_layers(
                 config=ConfigService(read_config(target.config)),
                 branches=UnavailableBranches(reason),
                 runs=UnavailableRuns(reason),
+                events=UnavailableEvents(reason),
             )
         )
 

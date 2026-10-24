@@ -21,7 +21,7 @@ from git_manager.core import (
     build_connector,
 )
 from git_manager.core.compose import LocalRuntime
-from git_manager.core.unavailable import UnavailableConfig
+from git_manager.core.unavailable import UnavailableConfig, UnavailableEvents
 from git_manager.health import HealthStatus
 from git_manager.rebasing import Run
 from git_manager.verification import TestResult
@@ -119,6 +119,7 @@ def operations_app(
         config=UnavailableConfig(reason),
         branches=branches or FakeBranchOperations(),
         runs=runs or FakeRunOperations(),
+        events=UnavailableEvents(reason),
     )
     return build_app(
         open_runtime=no_runtime,

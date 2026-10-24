@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from git_manager.branches.protocols import BranchOperations
 from git_manager.config.protocols import ConfigOperations
+from git_manager.events.protocols import EventOperations
 from git_manager.health.protocols import HealthOperations
 from git_manager.rebasing.protocols import RunOperations
 
@@ -16,3 +17,4 @@ class Service:
     config: ConfigOperations
     branches: BranchOperations
     runs: RunOperations
+    events: EventOperations
