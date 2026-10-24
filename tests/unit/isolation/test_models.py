@@ -4,12 +4,18 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from git_manager.isolation import (
+    Chowned,
+    ChownErrorCode,
+    ChownFailed,
+    ChownRequest,
     SpawnCompleted,
     SpawnErrorCode,
     SpawnFailed,
     SpawnRequest,
     SpawnResponse,
     SpawnTimedOut,
+    SupervisorRequest,
+    SupervisorResponse,
 )
 from git_manager.runtime import ProcessUser
 
@@ -69,3 +75,35 @@ def test_responses_are_told_apart_by_kind() -> None:
         {"kind": "failed", "code": "start_failed", "message": "no such file"}
     )
     assert failed == SpawnFailed(code=SpawnErrorCode.START_FAILED, message="no such file")
+
+
+def test_a_request_without_kind_is_a_spawn() -> None:
+    adapter: TypeAdapter[SupervisorRequest] = TypeAdapter(SupervisorRequest)
+    values = request().model_dump(mode="json")
+    del values["kind"]
+
+    assert adapter.validate_python(values) == request()
+
+
+def test_a_chown_request_names_any_user_and_an_absolute_path() -> None:
+    adapter: TypeAdapter[SupervisorRequest] = TypeAdapter(SupervisorRequest)
+    path = str(Path(ROOT, "data", "runs", "run-1"))
+
+    parsed = adapter.validate_python({"kind": "chown", "user": "gm", "path": path})
+
+    assert parsed == ChownRequest(user=ProcessUser.ORCHESTRATOR, path=Path(path))
+    with pytest.raises(ValidationError, match="absolute"):
+        ChownRequest(user=ProcessUser.CLAUDE, path=Path("runs"))
+    with pytest.raises(ValidationError):
+        adapter.validate_python({"kind": "exec", "user": "gm", "path": path})
+
+
+def test_chown_answers_are_told_apart_by_kind() -> None:
+    adapter: TypeAdapter[SupervisorResponse] = TypeAdapter(SupervisorResponse)
+
+    assert adapter.validate_python({"kind": "chowned", "skipped": ["sub/linked"]}) == Chowned(
+        skipped=(Path("sub/linked"),)
+    )
+    assert adapter.validate_python(
+        {"kind": "chown_failed", "code": "failed", "message": "EPERM"}
+    ) == ChownFailed(code=ChownErrorCode.FAILED, message="EPERM")

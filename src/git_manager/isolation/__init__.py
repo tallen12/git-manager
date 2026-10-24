@@ -14,6 +14,11 @@ from git_manager.isolation.errors import (
 from git_manager.isolation.local import LocalProcessRunner
 from git_manager.isolation.models import (
     SUPERVISOR_PROTOCOL_VERSION,
+    Chowned,
+    ChownErrorCode,
+    ChownFailed,
+    ChownRequest,
+    ChownResponse,
     IsolatedUser,
     SpawnCompleted,
     SpawnErrorCode,
@@ -21,6 +26,8 @@ from git_manager.isolation.models import (
     SpawnRequest,
     SpawnResponse,
     SpawnTimedOut,
+    SupervisorRequest,
+    SupervisorResponse,
 )
 from git_manager.isolation.protocols import SupervisorChannel
 from git_manager.isolation.supervised import SupervisedProcessRunner
@@ -30,6 +37,11 @@ __all__ = [
     "INHERITED_VARIABLES",
     "SUPERVISED_INHERITED_VARIABLES",
     "SUPERVISOR_PROTOCOL_VERSION",
+    "ChownErrorCode",
+    "ChownFailed",
+    "ChownRequest",
+    "ChownResponse",
+    "Chowned",
     "IsolatedUser",
     "LocalProcessRunner",
     "SpawnCompleted",
@@ -42,6 +54,8 @@ __all__ = [
     "SupervisorChannel",
     "SupervisorError",
     "SupervisorProtocolError",
+    "SupervisorRequest",
+    "SupervisorResponse",
     "SupervisorUnavailableError",
     "UnixSocketSupervisorChannel",
     "scrubbed_environment",

@@ -328,7 +328,10 @@ services:
     depends_on: [dind]
     volumes:
       - gm-data:/data
-      - dind-certs:/certs/client:ro   # re-owned to gm-tests, mode 0400
+      - type: volume                # the client certificates only (subpath), writable so
+        source: dind-certs          # the supervisor can re-own them to gm-tests, mode 0400
+        target: /certs/client
+        volume: { subpath: client }
     secrets: [deploy_key, claude_oauth_token, gm_tokens]
 volumes: { gm-data: {}, dind-certs: {}, dind-storage: {} }
 ```
@@ -694,7 +697,7 @@ git-manager/
 ├── pyproject.toml            # uv; [project.scripts] git-manager = "git_manager:main"
 ├── uv.lock
 ├── justfile                  # setup, format, lint, typecheck, test, check
-├── Dockerfile                # uv base; git, node + claude CLI, gh + gh-stack (pinned), just, make; supervisor
+├── Dockerfile                # uv base; git, node + claude CLI, gh + gh-stack (pinned), just, make, tini; supervisor
 ├── compose.yaml              # services: gm + dind sidecar; volumes: data, certs, docker storage
 ├── config.example.yaml
 ├── src/git_manager/          # organized by domain; adapters in cli, web, mcp
@@ -722,10 +725,10 @@ git-manager/
 **Security checklist**
 
 - **Process isolation:** the orchestrator, Claude and the test commands run as three different Unix users (table below). This is the main reason Git Manager runs in a container rather than in the developer's repo.
-- Read-only root filesystem except `/data` and `/tmp`; `no-new-privileges`; every Linux capability dropped except the few the supervisor needs to switch users.
+- Read-only root filesystem except `/data` and the tmpfs mounts `/tmp`, `/run/git-manager` (API socket), `/run/gm-supervisor` (supervisor socket) and `/run/secrets`; `no-new-privileges`; every Linux capability dropped except the four the supervisor needs to switch users (`cap_drop: [ALL]` plus `cap_add`). The supervisor refuses to start if it holds any other capability, even in its bounding set.
 - The API listens on all interfaces inside the container's network namespace and is published only on the host's `127.0.0.1:8765`. Every HTTP request needs a token, because Claude and test containers share that namespace and could otherwise call the API.
 - Token scopes: `read`, `operate`, `approve`. The `approve` scope is never issued to MCP and is required for approvals, retargets, test-command confirmation and security-sensitive config.
-- Secrets are files owned by `gm` with mode `0400`, never logged. The orchestrator passes each process only what it needs: the Claude token to Claude, nothing to tests.
+- Secrets are readable only by `gm` and never logged. Compose file secrets are bind mounts that keep the host's modes (often world-readable), so `/run/secrets` is a tmpfs holding those mounts, and the supervisor gives that directory to `gm` with mode `0500` at startup. The orchestrator passes each process only what it needs: the Claude token to Claude, nothing to tests.
 - Egress allowlist: the repo's git host, `api.github.com` (gh stack), `api.anthropic.com` (plus `claude.ai` for subscription auth), configured webhook hosts, package registries for `setup`, and container registries for `dind`.
 - The `dind` sidecar is `privileged` by default (Sysbox removes that on Linux). Its daemon accepts only mutual-TLS clients, is never exposed on the host, and its client certificates are readable only by `gm-tests`. The host Docker socket is never mounted unless `host_socket` mode is explicitly chosen.
 
@@ -737,18 +740,20 @@ git-manager/
 | `gm-claude` | Claude CLI, one run at a time | That run's worktree; the Claude token, passed in its environment | `/run/secrets`, `/certs`, the API socket, other worktrees |
 | `gm-tests` | `setup`, `test`, `lint` | That run's worktree, `/certs/client` | `/run/secrets`, the API socket, the Claude token |
 
-- PID 1 is a small supervisor that keeps only `CAP_SETUID`, `CAP_SETGID`, `CAP_CHOWN` and `CAP_KILL`. It runs the daemon as `gm` and, at the daemon's request, starts Claude or test processes as their users with a scrubbed environment (`env -i` plus an allowlist).
-- The run's worktree is handed to `gm-claude` for resolving, then to `gm-tests` for verifying, and back to `gm` for pushing (`chown -R` between phases). Other runs' worktrees stay mode `0700`.
+- PID 1 is `tini`, which reaps orphans and forwards signals to a small supervisor (`git-manager-supervisor`, root with only `CAP_SETUID`, `CAP_SETGID`, `CAP_CHOWN` and `CAP_KILL`). The supervisor runs the daemon as `gm` and, at the daemon's request, starts Claude or test processes as their users with a scrubbed environment (`env -i` plus an allowlist; see Supervisor protocol below). Python's `asyncio` reaps only its own children, so a separate init does the reaping.
+- The run's worktree is handed to `gm-claude` for resolving, then to `gm-tests` for verifying, and back to `gm` for pushing (a recursive chown by the supervisor, at the daemon's request, between phases). The supervisor has no `CAP_DAC_READ_SEARCH` or `CAP_FOWNER`, so it takes each directory for itself and locks it to `0700` before descending, never follows links, and leaves files with more than one hard link with their owner (reporting them), since another link could be outside the worktree. `/data` is `gm`'s with mode `0711`; other runs' worktrees stay mode `0700`. Commands enter their worktree only after switching user, because root without those capabilities cannot enter a `0700` directory it does not own.
 - The Unix socket is mode `0660`, group `gm-admin`. Operators reach it with `docker exec -u gm`; neither `gm-claude` nor `gm-tests` is in that group.
 - The test suite cannot approve, push or read git credentials, even though it is arbitrary repo code with Docker access.
 
-**Supervisor protocol.** The daemon asks the supervisor to start a process through a Unix socket, `/run/git-manager/supervisor.sock` (mode `0600`, owned by `gm`, so only the daemon can ask). The messages are defined once in `git_manager.isolation.models` and framed by `git_manager.isolation.wire`; the daemon's side is `SupervisedProcessRunner` over a `SupervisorChannel` protocol, so it is tested anywhere against a stand-in supervisor.
+**Supervisor protocol.** The daemon asks the supervisor to start a process through a Unix socket, `/run/gm-supervisor/supervisor.sock` (mode `0600`, owned by `gm`, so only the daemon can ask; the supervisor also checks the peer's uid with `SO_PEERCRED`). The socket has its own root-owned directory because `/run/git-manager` belongs to `gm` and `gm-admin`, and the supervisor, without `CAP_DAC_OVERRIDE`, could not replace a stale socket there. The messages are defined once in `git_manager.isolation.models` and framed by `git_manager.isolation.wire`; the daemon's side is `SupervisedProcessRunner` over a `SupervisorChannel` protocol, so it is tested anywhere against a stand-in supervisor.
 
 - **Framing:** one connection per command; the daemon sends one `SpawnRequest` as a UTF-8 JSON line and reads one answer line (at most 64 MiB).
 - **Request:** `version` (1), `user` (`gm-claude` or `gm-tests`, never `gm` or root), `argv`, an absolute `cwd`, the complete `env`, an optional `timeout_s` and `stdin`.
 - **Environment:** the daemon builds `env` from an allowlist of its own variables (`PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`) plus what the caller passes; nothing else is inherited. The supervisor runs the command with exactly that environment (`env -i`), adding only `HOME`, `USER` and `LOGNAME` for the target user when `env` does not set them.
 - **Process group and timeout:** the command starts in a new session. When it exits, anything left in its group is killed. At `timeout_s` the group gets `SIGTERM`, then `SIGKILL` after a short grace period. Closing the connection before the answer also kills the group.
-- **Answers** (discriminated by `kind`): `completed` (exit code, negative for a signal; stdout; stderr; duration), `timed_out` (output read so far, duration) or `failed` with `start_failed` (program or `cwd` missing, raised to callers as `OSError`) or `invalid_request` (wrong version, user or fields).
+- **Answers** (discriminated by `kind`): `completed` (exit code, negative for a signal; stdout; stderr; duration), `timed_out` (output read so far, duration) or `failed` with `start_failed` (program or `cwd` missing, raised to callers as `OSError`) or `invalid_request` (wrong version, user or fields, or refused by the policy below). Each of stdout and stderr keeps only its last 8 MiB, with a note of how much was dropped.
+- **Policy:** `cwd` must be inside `/data`. The supervisor refuses, as `invalid_request`, credential variables in `env` even though the daemon scrubs its own: `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK`, `GIT_ASKPASS`, `GIT_SSH_COMMAND` and similar, any `GM_*` setting except `GM_RUN_ID`, the Claude token for `gm-tests` and `DOCKER_*` for `gm-claude`.
+- **Handing over a worktree:** a `ChownRequest` (`kind: "chown"`, `user` (any of the three), an absolute `path` strictly inside `/data`) gives the tree to that user and its group, answered with `chowned` (listing hard-linked files left alone, see Process isolation) or `chown_failed` (`invalid_request`, or `failed` when a node could not be changed). A request without `kind` is a spawn, so the spawn messages are unchanged.
 - `gm` commands (git, gh) do not go through the supervisor: the daemon already runs as `gm` and starts them itself, with the same scrubbing, process group and timeout rules. Outside the container, `LocalProcessRunner` runs every command that way as the current user and logs once that process isolation is off.
 
 **Delivery plan**

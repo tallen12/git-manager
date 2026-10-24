@@ -8,8 +8,12 @@ from git_manager.isolation.errors import SupervisorProtocolError, SupervisorUnav
 from git_manager.isolation.models import SpawnRequest, SpawnResponse
 from git_manager.isolation.wire import MAX_MESSAGE_BYTES, decode_response, encode_request
 
-DEFAULT_SOCKET = Path("/run/git-manager/supervisor.sock")
-"""Where the supervisor listens: mode 0600, owned by ``gm``, so only the daemon can ask."""
+DEFAULT_SOCKET = Path("/run/gm-supervisor/supervisor.sock")
+"""Where the supervisor listens: mode 0600, owned by ``gm``, so only the daemon can ask.
+
+Its own root-owned directory: ``/run/git-manager`` belongs to ``gm`` and ``gm-admin``, and
+root without ``CAP_DAC_OVERRIDE`` could not replace a stale socket there.
+"""
 
 
 class UnixSocketSupervisorChannel:

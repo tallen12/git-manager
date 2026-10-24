@@ -15,6 +15,8 @@ from git_manager.runtime import ProcessUser
 def test_the_default_socket_lives_under_run() -> None:
     assert DEFAULT_SOCKET.name == "supervisor.sock"
     assert DEFAULT_SOCKET.is_absolute()
+    # Not in /run/git-manager, which belongs to gm and gm-admin (see the module docstring).
+    assert DEFAULT_SOCKET.parent.name == "gm-supervisor"
 
 
 async def test_a_missing_supervisor_is_unavailable() -> None:

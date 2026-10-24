@@ -16,6 +16,11 @@ message each way (framing in ``isolation.wire``):
    the output read so far. A request it cannot start gets ``SpawnFailed``.
 4. If the daemon closes the connection before the answer, the supervisor kills the group.
 
+The daemon also asks the supervisor to hand a run's worktree to another user between
+phases (``ChownRequest``; see Process isolation in the spec), since only root can change
+owners. The answer is ``Chowned`` or ``ChownFailed``. Requests are told apart by ``kind``;
+a request without one is a ``SpawnRequest``.
+
 The supervisor never adds variables of its own beyond the three above, never runs a
 request as ``gm`` or root, and rejects requests with an unknown ``version``.
 """
@@ -24,7 +29,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator
 
 from git_manager.runtime.models import ProcessUser
 
@@ -39,10 +44,19 @@ class _Message(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+def _absolute(path: Path) -> Path:
+    # The supervisor's working directory is not the daemon's; relative paths would drift.
+    if not path.is_absolute():
+        msg = f"path must be absolute, got {path}"
+        raise ValueError(msg)
+    return path
+
+
 class SpawnRequest(_Message):
     """Run one command as an isolated user."""
 
     version: Literal[1] = SUPERVISOR_PROTOCOL_VERSION
+    kind: Literal["run"] = "run"
     user: IsolatedUser
     argv: tuple[str, ...] = Field(min_length=1)
     cwd: Path
@@ -53,11 +67,35 @@ class SpawnRequest(_Message):
     @field_validator("cwd")
     @classmethod
     def _absolute_cwd(cls, cwd: Path) -> Path:
-        # The supervisor's working directory is not the daemon's; relative paths would drift.
-        if not cwd.is_absolute():
-            msg = f"cwd must be absolute, got {cwd}"
-            raise ValueError(msg)
-        return cwd
+        return _absolute(cwd)
+
+
+class ChownRequest(_Message):
+    """Give the tree at ``path`` (inside the data directory) to ``user`` and its group."""
+
+    version: Literal[1] = SUPERVISOR_PROTOCOL_VERSION
+    kind: Literal["chown"] = "chown"
+    user: ProcessUser
+    path: Path
+
+    @field_validator("path")
+    @classmethod
+    def _absolute_path(cls, path: Path) -> Path:
+        return _absolute(path)
+
+
+def _request_kind(value: object) -> str:
+    if isinstance(value, dict):
+        kind = value.get("kind", "run")
+        return kind if isinstance(kind, str) else ""
+    return str(getattr(value, "kind", ""))
+
+
+type SupervisorRequest = Annotated[
+    Annotated[SpawnRequest, Tag("run")] | Annotated[ChownRequest, Tag("chown")],
+    Discriminator(_request_kind),
+]
+"""Anything the daemon may send; requests from before ``kind`` existed are spawns."""
 
 
 class SpawnCompleted(_Message):
@@ -99,3 +137,40 @@ class SpawnFailed(_Message):
 type SpawnResponse = Annotated[
     SpawnCompleted | SpawnTimedOut | SpawnFailed, Field(discriminator="kind")
 ]
+
+
+class Chowned(_Message):
+    """The tree belongs to the requested user, except ``skipped``.
+
+    ``skipped`` lists files (relative to the tree) with more than one hard link: another
+    link may be outside the tree, so they keep their owner.
+    """
+
+    kind: Literal["chowned"] = "chowned"
+    skipped: tuple[Path, ...] = ()
+
+
+class ChownErrorCode(StrEnum):
+    """Why a tree was not, or not completely, handed over."""
+
+    # Outside the data directory, or bad fields; nothing changed.
+    INVALID_REQUEST = "invalid_request"
+    # A node could not be changed; directories already locked were given back.
+    FAILED = "failed"
+
+
+class ChownFailed(_Message):
+    """The hand-over did not happen or did not finish."""
+
+    kind: Literal["chown_failed"] = "chown_failed"
+    code: ChownErrorCode
+    message: str
+
+
+type ChownResponse = Annotated[Chowned | ChownFailed, Field(discriminator="kind")]
+
+type SupervisorResponse = Annotated[
+    SpawnCompleted | SpawnTimedOut | SpawnFailed | Chowned | ChownFailed,
+    Field(discriminator="kind"),
+]
+"""Anything the supervisor may answer."""

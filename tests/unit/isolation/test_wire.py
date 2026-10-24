@@ -3,14 +3,18 @@ from pathlib import Path
 import pytest
 
 from git_manager.isolation import (
+    Chowned,
+    ChownRequest,
     SpawnCompleted,
     SpawnRequest,
     SpawnTimedOut,
     SupervisorProtocolError,
 )
 from git_manager.isolation.wire import (
+    decode_chown_response,
     decode_request,
     decode_response,
+    decode_supervisor_request,
     encode_request,
     encode_response,
 )
@@ -51,3 +55,23 @@ def test_malformed_messages_are_protocol_errors() -> None:
 def test_a_closed_connection_is_a_protocol_error() -> None:
     with pytest.raises(SupervisorProtocolError, match="without answering"):
         decode_response(b"")
+
+
+def test_the_supervisor_decodes_both_kinds_of_request() -> None:
+    spawn = SpawnRequest(user=ProcessUser.TESTS, argv=("true",), cwd=Path.cwd(), env={})
+    chown = ChownRequest(user=ProcessUser.CLAUDE, path=Path.cwd())
+
+    assert decode_supervisor_request(encode_request(spawn)) == spawn
+    assert decode_supervisor_request(encode_request(chown)) == chown
+    with pytest.raises(SupervisorProtocolError, match="supervisor request"):
+        decode_supervisor_request(b'{"kind": "chown"}\n')
+
+
+def test_chown_answers_round_trip() -> None:
+    answer = Chowned(skipped=(Path("linked"),))
+
+    assert decode_chown_response(encode_response(answer)) == answer
+    with pytest.raises(SupervisorProtocolError, match="without answering"):
+        decode_chown_response(b"")
+    with pytest.raises(SupervisorProtocolError, match="chown response"):
+        decode_chown_response(b'{"kind": "completed"}\n')
