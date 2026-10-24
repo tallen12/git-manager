@@ -14,7 +14,7 @@ def create_server(*, operations: Operations, mcp: McpSettings) -> FastMCP:
     @server.tool
     async def health() -> HealthStatus:
         """Report whether Git Manager is alive and which version is running."""
-        return await operations.health()
+        return await operations.health.status()
 
     return server
 

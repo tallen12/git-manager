@@ -1,0 +1,72 @@
+# Git Manager and its Docker-in-Docker sidecar for tests that start containers (see
+# "Tests that need Docker" and the Security checklist in design-docs/spec.md).
+#
+# Before `docker compose up`, put the repo config in ./config.yaml and the secrets in
+# ./secrets/ (deploy_key, claude_oauth_token).
+name: git-manager
+
+services:
+  dind:
+    image: docker:27-dind
+    privileged: true # or runtime: sysbox-runc on Linux hosts with Sysbox
+    environment:
+      # Mutual TLS on port 2376; the client certificates land in /certs/client.
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - dind-certs:/certs
+      - dind-storage:/var/lib/docker
+      - gm-data:/data # same path as in gm, so test bind mounts resolve
+    ports:
+      # The Git Manager API: gm shares this network namespace. No Docker port is published.
+      - "127.0.0.1:8765:8765"
+    healthcheck:
+      test: ["CMD", "test", "-s", "/certs/client/key.pem"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: unless-stopped
+
+  gm:
+    build: .
+    image: git-manager:latest
+    network_mode: service:dind # ports from test containers appear on localhost
+    depends_on:
+      dind:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/git-manager
+      - /run/gm-supervisor
+      # Holds the secret mounts; the supervisor gives it to gm with mode 0500, since file
+      # secrets keep the host's modes and could otherwise be read by gm-claude or gm-tests.
+      - /run/secrets
+    cap_drop: [ALL]
+    cap_add: [CHOWN, KILL, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - gm-data:/data
+      # Writable so the supervisor can give the certificates to gm-tests, mode 0400.
+      - type: volume
+        source: dind-certs
+        target: /certs/client
+        volume:
+          subpath: client
+      - ./config.yaml:/etc/git-manager/config.yaml:ro
+    secrets: [deploy_key, claude_oauth_token]
+    restart: unless-stopped
+    # On stop the daemon lets the current run finish (verify.timeout defaults to 30m per
+    # command); only a run still going after this is killed. See Shutdown in the spec.
+    stop_grace_period: 45m
+
+secrets:
+  deploy_key:
+    file: ./secrets/deploy_key
+  claude_oauth_token:
+    file: ./secrets/claude_oauth_token
+
+volumes:
+  gm-data: {}
+  dind-certs: {}
+  dind-storage: {}

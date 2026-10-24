@@ -91,11 +91,17 @@ Detection and action run on separate clocks: the poller checks hashes every `pol
 4. Conflicts go to the Resolver (next section); a clean rebase goes straight to Verifying.
 5. Tests green → push or wait for approval per the policy; then update `fork_point`, `last_base_sha`, `last_head_sha`.
 
+**Run edge cases.** The run checks the remote feature branch after the rebase and again after verifying; the push lease is the tip the current attempt started from, so a human push seen before the run starts is rebased, not rejected. Verify commands are resolved before any worktree is created: none gives `needs_config` with reason `missing_commands`, an unparseable one `needs_config` with `invalid_commands`. A base or feature branch gone from the remote when the run starts records no run and sets `base_missing` or `idle`. Any unexpected error stops the run and the branch in `needs_human` with no reason. A run that stops at the approval gate is not finished until the approval completes it.
+
 **Interrupts.** If the remote feature branch moves mid-run, the run is aborted and restarted from the new tip. If the lease check fails at push time, the branch goes to `diverged_remote` and waits for a human. `git-manager pause` stops polling for a branch without losing state.
 
 **Restart cap.** If the feature branch moves mid-run more than `max_restarts` times in a row (default 3), the branch is paused with reason `max_restarts` and you are notified. This is how "someone is actively pushing to it" from the non-goals is detected.
 
 **Concurrency.** One run at a time per container in v1, queued first in, first out. A stack run counts as one run. Polling continues while a run is in progress.
+
+**Daemon.** `git-manager serve` is the container's entry point (the supervisor starts it as `gm`). It opens the target the way local mode does (`open_local`), so it holds the data-directory lock for its whole life, serves REST, and runs two loops: the poller wakes every second and polls each branch whose `poll_interval` has passed, and one worker takes runs off the queue. The queue lives in memory, so on start the daemon queues again every branch left `scheduled`. A poll or config error is logged and retried on the next tick; a failed run is logged and the worker goes on with the next one.
+
+**Shutdown.** On SIGTERM or SIGINT the REST server stops, polling stops at once and no further run starts; a run in progress finishes (push, approval gate or stop state) before the daemon releases the lock and exits. Branches still waiting in the queue stay `scheduled` and run after the next start. Letting the run finish was chosen over aborting it because an aborted run could stop between the push and the state update, leaving the store disagreeing with the remote. Compose sets `stop_grace_period` long enough for a run to end; a run killed after that leaves its branch in an active state, which needs a human (startup recovery for this is not built yet).
 
 **Leaving stop states**
 
@@ -111,7 +117,11 @@ Detection and action run on separate clocks: the poller checks hashes every `pol
 | `waiting_quota` | The usage-limit reset time passes |
 | `paused` | `git-manager resume` |
 
-A base change while in `needs_human`, `needs_config`, `diverged_remote` or `paused` is recorded but does not start a run, so a stuck branch does not burn the Claude budget.
+A base change while in `needs_human`, `needs_config`, `diverged_remote` or `paused` is recorded but does not start a run, so a stuck branch does not burn the Claude budget. The same holds for `stack_partial_push`, `waiting_budget` and `waiting_quota`, which their own triggers leave. "Recorded" means a `base_moved` event; when a human later leaves the stop state, the next poll schedules the pending change by the cadence, counted from when the base moved. `tests_failed` starts a new run only on a base hash the poller has not seen since the failed run. A branch can also enter one of these states while its run waits in the queue (a human pauses it, for example), so the runner checks again once it holds the branch lock: a poll-triggered run does not start on a branch in any of them, and a human-triggered run (`sync`, `retry`, `retarget`) does not start on a `paused` branch. A skipped run changes nothing and records no run.
+
+`resume` leaves `paused`, `needs_human` and `diverged_remote` only; for any other state it fails and names that state's way out. Since a human may have rebased and pushed the branch meanwhile, it re-reads the remote branch and takes the `merge-base` with the base as the new `fork_point`, as `track` does. `pause` keeps a paused branch as it is and refuses `awaiting_approval` (decide the approval instead); `pause`, `resume` and `untrack` wait for a run in progress on the branch to end, so a run never overwrites them. `sync` refuses only `paused`.
+
+**Poller details.** Each new remote hash of the base or the feature branch emits one `base_moved` or `head_moved` event (a deleted branch has `to: null`); during a run these are reported only, and the run decides whether to restart. Git Manager's own push is not a human push: a feature-branch hash equal to a `last_head_sha` that changed since the previous poll (a run recorded it) emits no `head_moved`. Each poll judges the branch as stored after `ls-remote` returns, so a run that starts or pushes meanwhile is neither overwritten nor reported. A feature branch missing on the remote is never scheduled. `cron` expressions are evaluated in UTC. What the poller last saw lives in memory, so after a restart a pending base change counts as made at the first poll (the debounce window starts again).
 
 ## Stacked branches (gh stack)
 
@@ -269,10 +279,13 @@ Rebased commits keep their author, message and trailers. Git Manager changes onl
 A rebased branch is pushable only when the repo's test command exits 0 on the rebased tip, inside the run's worktree, within the timeout. The command is normally read from the repo's `AGENTS.md`, not hard-coded in Git Manager's config.
 
 - **Commands:** `setup`, `test` and optional `lint`, resolved as described below (e.g. `just setup` / `just test` in a repo with a justfile, `uv run pytest -q` in another). They run as a non-root user with the same egress allowlist.
-- **Timeout:** default 30 minutes; exceeding it counts as a failure.
+- **Timeout:** `verify.timeout`, default 30 minutes, for each attempt of each command; exceeding it counts as a failure and kills the command's whole process group.
 - **Baseline (optional, default off):** run the same tests on the new base commit first. If the base is already red, the report says so and the run stops in `tests_failed` with reason `baseline_red` instead of blaming the rebase.
-- **Flaky retries:** `test_retries` (default 0). A pass on retry is flagged in the report.
+- **Flaky retries:** `verify.retries` (default 0) extra attempts for `test` only, after a failure or a timeout. A pass on retry is flagged in the report (`attempts` above 1).
 - **Artifacts kept per run:** the commands used and where they came from, exit code, duration, last 500 lines of output, JUnit XML if the command produces it.
+  - Output is stdout followed by stderr: the streams are captured separately, so their interleaving is lost.
+  - JUnit XML is found, not configured: the newest file under the worktree named like `*junit*.xml`, `TEST-*.xml`, `*test-results*.xml` or `*test-report*.xml`, written during the step and starting with a `<testsuite` element (dependency and `.git` folders are skipped, files over 10 MiB are left out).
+- **How a command runs:** the command string is split with POSIX shell quoting and run without a shell, as `gm-tests`, in the worktree, with no credentials. Pipelines, `&&` and redirections belong in a script or task runner recipe. A command whose program cannot be started fails its step with exit code 127 (as a shell reports it), so the caller can report `missing_tool`. Steps run in order (`setup`, `test`, `lint`) and the first failure stops the rest.
 - **Tests that need Docker:** served by a Docker-in-Docker sidecar (below), never by the host's Docker socket.
 
 ### Where the test commands come from
@@ -300,7 +313,7 @@ Tests that start containers (Testcontainers, `docker compose` fixtures) run agai
 2. **Same paths on both sides.** The `/data` volume (clone and worktrees) is mounted into `dind` at the same path, so bind mounts in test fixtures such as `./fixtures:/fixtures` resolve to the same files.
 3. **Shared network namespace.** `gm` runs with `network_mode: service:dind`, so ports published by test containers appear on `localhost` and tests that hardcode `localhost:5432` keep working.
 4. **Credentials only for the test step.** The verifier sets `DOCKER_HOST=tcp://localhost:2376`, `DOCKER_TLS_VERIFY=1` and `DOCKER_CERT_PATH` for `setup` and `test` only. The certificate files are readable only by the `gm-tests` user, which runs those commands with a scrubbed environment. Claude's user cannot read them, and its settings also deny docker.
-5. **Cleanup after every run.** The verifier labels the run (`gm.run=<run-id>`, passed to tests as `GM_RUN_ID`) and removes leftover containers, networks and volumes afterwards. With `reset_between_runs: true` it also prunes everything older than the run. Testcontainers' Ryuk works unchanged.
+5. **Cleanup after every run.** The verifier labels the run (`gm.run=<run-id>`, passed to tests as `GM_RUN_ID`) and, whatever the outcome, removes leftover containers, networks and volumes with that label afterwards, running `docker` as `gm-tests`. With `reset_between_runs: true` it also prunes stopped containers and networks older than the run and unused anonymous volumes; images are kept for the cache (point 6). A failed cleanup is logged and does not change the test outcome. Testcontainers' Ryuk works unchanged. Until F27, `host_socket` mode is rejected when verifying.
 6. **Image cache.** `/var/lib/docker` in `dind` is a named volume, so pulled images survive restarts. An optional `registry_mirror` speeds cold starts.
 
 ```yaml
@@ -323,7 +336,10 @@ services:
     depends_on: [dind]
     volumes:
       - gm-data:/data
-      - dind-certs:/certs/client:ro   # re-owned to gm-tests, mode 0400
+      - type: volume                # the client certificates only (subpath), writable so
+        source: dind-certs          # the supervisor can re-own them to gm-tests, mode 0400
+        target: /certs/client
+        volume: { subpath: client }
     secrets: [deploy_key, claude_oauth_token, gm_tokens]
 volumes: { gm-data: {}, dind-certs: {}, dind-storage: {} }
 ```
@@ -410,10 +426,12 @@ All of these need only the `operate` scope, so MCP can use them. None of them pu
 
 One service layer (`git_manager.core.Service`) backs all three interfaces, so REST, MCP and CLI cannot drift: each is a thin adapter over the same Pydantic models. The service's public operations are defined once as a protocol (`git_manager.core.Operations`). `Service` implements it in-process; `HttpOperations` implements it as an httpx client of the REST API. REST mirrors every operation, so either implementation can back the CLI, and one contract test suite runs against both.
 
+`Operations` is composed of one small protocol per domain, reached as attributes: `operations.health` (`HealthOperations`), `operations.config` (`ConfigOperations`), `operations.branches` (`BranchOperations`) and `operations.runs` (`RunOperations`), with more added by later milestones. Each protocol lives in its domain next to its in-process service; its REST router and HTTP client mirror live in `web/<domain>.py` and its commands in `cli/<domain>.py`. `Service` and `HttpOperations` are bundles of one implementation per domain, so adding an operation touches only that domain's files. A domain a target cannot serve yet (in-process before its M1 feature lands, over REST before M2) is filled by a stand-in from `core.unavailable` that raises `UnavailableError` with the reason. Operation errors are typed (`NotFoundError`, `ConflictError`, `UnavailableError` in `git_manager.errors`, a leaf module any domain can import without loading `core`) and map one to one to HTTP statuses.
+
 - **REST (FastAPI):** `/api/v1/...`, OpenAPI at `/docs`, SSE at `/api/v1/events`. Every request needs a bearer token. Scopes: `read`; `operate` (sync, pause, resume, track, non-sensitive config); `approve` (approvals, retargets, test-command confirmation, budget reset, sensitive config).
 - **Sensitive config** needs `approve`: anything under `verify`, `claude`, `stack.mode` and `budget`, plus `approval_policy`, `auto_push_clean`, `notify.webhooks` and `signing_key`. That way an agent cannot set the test command, widen Claude's tools or skip approval through config.
 - **MCP (FastMCP):** mounted on the same server at `/mcp` (streamable HTTP). `git-manager mcp stdio --url ...` provides a stdio bridge for MCP clients that only speak stdio. Its token has `read` and `operate` but never `approve`, so retarget, approve and sensitive config tools are not exposed at all. Tools are hand-written (not auto-generated from OpenAPI) for clear descriptions.
-- **CLI (cyclopts), command `git-manager`:** runs every operation in the table below, either in-process (local mode) or through the REST API (API mode). Both modes take the same arguments and print the same output, because the CLI depends only on the `Operations` protocol. `git-manager serve` starts the daemon; `git-manager config validate` works offline in either mode.
+- **CLI (cyclopts), command `git-manager`:** runs every operation in the table below, either in-process (local mode) or through the REST API (API mode). Both modes take the same arguments and print the same output, because the CLI depends only on the `Operations` protocol. `git-manager serve` starts the daemon and needs a config target (`--config`), since it owns the data directory; with `--url` or `--socket` it exits with an error. `git-manager config validate` works offline: it reads the target's config file directly, without a daemon.
 
 **Modes.** Where operations run is chosen per invocation by the settings described below. The same settings configure every entry point: CLI commands, `serve` and `mcp stdio`, so REST and MCP can also be started on their own (`git_manager.web.app.serve`, `git_manager.mcp.server.serve_stdio`) from the same sources.
 
@@ -474,6 +492,8 @@ class Settings(BaseSettings):
 
 - **One writer at a time.** The data directory holds an exclusive lock while a daemon or a local-mode command uses it. A local-mode command that finds the lock held exits with an error naming the API mode to use instead, so the CLI never becomes a second writer next to a running daemon.
 - **Local mode runs to completion.** There is no poller: `sync` runs the rebase, verification and any Claude resolution in the foreground and prints the result; scheduled cadence needs `serve`. Approvals, failures and sessions are stored in the same SQLite state, so a run started locally can be approved later in either mode.
+- **Local mode opens what the daemon opens.** Every local-mode command, `doctor` and `config show` included, loads the config, takes the data-directory lock, opens `state.db` and, the first time, clones `repo.url` into `<data_dir>/repo` (`git_manager.core.compose.open_local`, which `serve` reuses). Git runs with only `PATH`, `HOME`, the SSH agent and git config variables from the environment, `repo.credential` as the SSH key, and `defaults.commits.committer` as the committer of rewritten commits.
+- **Exit codes.** `0` success; `1` the operation failed, printed as one `error: ...` line; `2` invalid flags or settings; `3` a `sync` whose run ended without pushing (its state says why: `awaiting_approval`, `needs_human`, `tests_failed`, ...).
 - **Local mode keeps the security rules.** Credentials are still read only by the orchestrating process and never passed to Claude or test commands. Inside the container, local mode uses the supervisor to run Claude and tests as `gm-claude` and `gm-tests`. Outside the container there are no separate users, so local mode logs a warning that process isolation is off; the scrubbed environments, Claude limits and approval gates still apply.
 - **`watch` needs API mode**, since events come from a running daemon. In local mode, a command's own events are printed as it runs.
 - **Errors map one to one.** `HttpOperations` turns API error responses (`403` missing scope, `409 stale`, validation errors) back into the same typed results `Service` returns, so CLI output does not depend on the mode.
@@ -508,7 +528,12 @@ The MCP server also exposes a prompt, `review_pending_rebase`, that walks an age
 
 Configuration is a hand-editable YAML file whose every field has a default, so a minimal repo entry is just a URL, a branch and a base.
 
-**Precedence (lowest to highest):** built-in defaults → `defaults:` block → per-branch block → `GM_*` environment variables (pydantic-settings). Each container manages exactly one repo, so the file holds a single `repo:` block. A `.git-manager.yaml` inside the repo is read only when `trust_repo_config: true` (default false), since anyone with commit access could otherwise change Git Manager's behavior. Test commands taken from AGENTS.md are instead gated by the human confirmation step in Verification. API and CLI edits write back to the same file atomically, preserving comments (ruamel.yaml).
+**Precedence (lowest to highest):** built-in defaults → `defaults:` block → the repo's `.git-manager.yaml` (when trusted) → per-branch block → `GM_*` environment variables. Layers merge as plain mappings before validation (mappings key by key, lists and scalars replaced), so a branch block that sets only `verify.test` keeps the other `verify` values, and a cron `mode` and its expression may come from different layers. Each container manages exactly one repo, so the file holds a single `repo:` block.
+
+- **Environment overrides** are `GM_<SECTION>__<KEY>__...` for the `repo`, `budget` and `defaults` sections (`GM_REPO__DATA_DIR`, `GM_DEFAULTS__CLAUDE__MAX_TURNS`), case-insensitive like the settings' variables; other `GM_*` names belong to the settings. Lists and mappings are written as JSON (`GM_DEFAULTS__NOTIFY__ON='["pushed"]'`). As the highest layer, a `GM_DEFAULTS__*` value applies to the `defaults:` block and to every branch. They are read from the process environment only, not from `.env`.
+- **The repo's `.git-manager.yaml`** (read from the clone, `<data_dir>/repo`) is read only when `trust_repo_config: true` (default false; it may be set by the file or `GM_REPO__TRUST_REPO_CONFIG`), since anyone with commit access could otherwise change Git Manager's behavior. It may hold only a `defaults:` block, layered above the operator's `defaults:` so trusting the repo has an effect, and below each branch block and the environment so the operator keeps the last word. Where the repo lives, its credentials, the budget and which branches are tracked never come from the repo. Test commands taken from AGENTS.md are instead gated by the human confirmation step in Verification.
+- **Write-back.** API and CLI edits write back to the same file (through a symlink to its target), preserving comments, key order, quoting and the file's own indentation (ruamel.yaml round trip; `None` is written as `null`). The edited document is validated with every layer before anything is written, then written to a temporary file in the same directory that atomically replaces the original with its permission bits. Whether a caller may change a key is checked by the operation, not the writer (see Sensitive config).
+- **`git-manager config validate`** checks the local target's file (`--config` / `GM_TARGET__CONFIG`) with every layer, without the daemon, the state or the data-directory lock, and lists every problem by config path (`branches[feature/x].verify.timeout: ...`). With a URL or socket target it fails, since there is no file to check. `config show` prints the effective config as JSON through `Operations` (in local mode from M1, through REST once M2 adds `GET /config`).
 
 ```yaml
 # /etc/git-manager/config.yaml  (one repo per container)
@@ -591,6 +616,8 @@ branches:
 
 **Core Pydantic models** (shared by config, DB rows, REST bodies and MCP tool schemas)
 
+The models below are the full v1 shapes. Each milestone's contracts feature lands the part it needs, so M1's models omit the fields later milestones add: `TrackedBranch` has no `stack` (M4) and no `config` (a branch's effective config is looked up by name from the repo config instead of being copied into its record), and `Run` has no `mode`, `stack` (M4), `conflicts` or `claude` (M3). `reason` is a `Reason` enum rather than a string, and each milestone adds its values. `Event` carries `kind` (an `EventKind`: tracked, untracked, state_changed, run_started, run_finished, pushed) plus the new `state` and `reason`; `notify.on` names states and the `pushed` and `stack_removed` events. `repo.trust_repo_config` is sensitive config like `signing_key`, since it lets anyone with commit access change Git Manager's behavior, and `repo.data_dir` (default `/data`) locates the clone, worktrees and `state.db` so local mode can run outside the container.
+
 ```python
 class BranchState(StrEnum):
     idle = "idle"; behind = "behind"; scheduled = "scheduled"; retargeting = "retargeting"
@@ -601,7 +628,8 @@ class BranchState(StrEnum):
     stack_partial_push = "stack_partial_push"
     waiting_budget = "waiting_budget"; waiting_quota = "waiting_quota"; paused = "paused"
 
-# reason values: baseline_red, missing_tool, stack_merged, stack_removed, max_restarts,
+# reason values: missing_commands, invalid_commands, conflict, rewritten_base, verify_failed,
+# lease_rejected, paused_by_user, baseline_red, missing_tool, stack_merged, stack_removed, max_restarts,
 # limit_turns, limit_budget, limit_timeout, size_gate, ...
 
 class StackInfo(BaseModel):
@@ -665,7 +693,7 @@ class Event(BaseModel):
     id: int; at: datetime; kind: str; branch_id: str; run_id: str | None; data: dict
 ```
 
-State persists in SQLite (`/data/state.db`) via SQLModel or plain SQLAlchemy; the clone lives in `/data/repo` and run worktrees in `/data/worktrees`. With one repo per container, `repo_id` is fixed per instance but kept in the models so a multi-repo mode can be added later.
+State persists in SQLite (`/data/state.db`) via SQLModel or plain SQLAlchemy; the clone lives in `/data/repo` and run worktrees in `/data/worktrees`. With one repo per container, `repo_id` is fixed per instance but kept in the models so a multi-repo mode can be added later. Each row stores its record as the JSON of its Pydantic model, plus copies of the fields queries filter or sort on, so records round-trip exactly and new optional fields need no migration. Schema migrations are append-only SQL steps versioned by SQLite's `user_version`; each runs in one transaction with its version bump, and a database newer than the code is refused. All database calls run on one worker thread, off the event loop. The one-writer lock is an advisory `flock` on `/data/git-manager.lock`, which the kernel releases when the holder exits, so a crash never leaves a stale lock.
 
 ## Project setup, delivery plan and decisions
 
@@ -680,7 +708,7 @@ git-manager/
 ├── pyproject.toml            # uv; [project.scripts] git-manager = "git_manager:main"
 ├── uv.lock
 ├── justfile                  # setup, format, lint, typecheck, test, check
-├── Dockerfile                # uv base; git, node + claude CLI, gh + gh-stack (pinned), just, make; supervisor
+├── Dockerfile                # uv base; git, node + claude CLI, gh + gh-stack (pinned), just, make, tini; supervisor
 ├── compose.yaml              # services: gm + dind sidecar; volumes: data, certs, docker storage
 ├── config.example.yaml
 ├── src/git_manager/          # organized by domain; adapters in cli, web, mcp
@@ -708,10 +736,10 @@ git-manager/
 **Security checklist**
 
 - **Process isolation:** the orchestrator, Claude and the test commands run as three different Unix users (table below). This is the main reason Git Manager runs in a container rather than in the developer's repo.
-- Read-only root filesystem except `/data` and `/tmp`; `no-new-privileges`; every Linux capability dropped except the few the supervisor needs to switch users.
+- Read-only root filesystem except `/data` and the tmpfs mounts `/tmp`, `/run/git-manager` (API socket), `/run/gm-supervisor` (supervisor socket) and `/run/secrets`; `no-new-privileges`; every Linux capability dropped except the four the supervisor needs to switch users (`cap_drop: [ALL]` plus `cap_add`). The supervisor refuses to start if it holds any other capability, even in its bounding set.
 - The API listens on all interfaces inside the container's network namespace and is published only on the host's `127.0.0.1:8765`. Every HTTP request needs a token, because Claude and test containers share that namespace and could otherwise call the API.
 - Token scopes: `read`, `operate`, `approve`. The `approve` scope is never issued to MCP and is required for approvals, retargets, test-command confirmation and security-sensitive config.
-- Secrets are files owned by `gm` with mode `0400`, never logged. The orchestrator passes each process only what it needs: the Claude token to Claude, nothing to tests.
+- Secrets are readable only by `gm` and never logged. Compose file secrets are bind mounts that keep the host's modes (often world-readable), so `/run/secrets` is a tmpfs holding those mounts, and the supervisor gives that directory to `gm` with mode `0500` at startup. The orchestrator passes each process only what it needs: the Claude token to Claude, nothing to tests.
 - Egress allowlist: the repo's git host, `api.github.com` (gh stack), `api.anthropic.com` (plus `claude.ai` for subscription auth), configured webhook hosts, package registries for `setup`, and container registries for `dind`.
 - The `dind` sidecar is `privileged` by default (Sysbox removes that on Linux). Its daemon accepts only mutual-TLS clients, is never exposed on the host, and its client certificates are readable only by `gm-tests`. The host Docker socket is never mounted unless `host_socket` mode is explicitly chosen.
 
@@ -723,10 +751,21 @@ git-manager/
 | `gm-claude` | Claude CLI, one run at a time | That run's worktree; the Claude token, passed in its environment | `/run/secrets`, `/certs`, the API socket, other worktrees |
 | `gm-tests` | `setup`, `test`, `lint` | That run's worktree, `/certs/client` | `/run/secrets`, the API socket, the Claude token |
 
-- PID 1 is a small supervisor that keeps only `CAP_SETUID`, `CAP_SETGID`, `CAP_CHOWN` and `CAP_KILL`. It runs the daemon as `gm` and, at the daemon's request, starts Claude or test processes as their users with a scrubbed environment (`env -i` plus an allowlist).
-- The run's worktree is handed to `gm-claude` for resolving, then to `gm-tests` for verifying, and back to `gm` for pushing (`chown -R` between phases). Other runs' worktrees stay mode `0700`.
+- PID 1 is `tini`, which reaps orphans and forwards signals to a small supervisor (`git-manager-supervisor`, root with only `CAP_SETUID`, `CAP_SETGID`, `CAP_CHOWN` and `CAP_KILL`). The supervisor runs the daemon as `gm` and, at the daemon's request, starts Claude or test processes as their users with a scrubbed environment (`env -i` plus an allowlist; see Supervisor protocol below). Python's `asyncio` reaps only its own children, so a separate init does the reaping.
+- The run's worktree is handed to `gm-claude` for resolving, then to `gm-tests` for verifying, and back to `gm` for pushing (a recursive chown by the supervisor, at the daemon's request, between phases). The supervisor has no `CAP_DAC_READ_SEARCH` or `CAP_FOWNER`, so it takes each directory for itself and locks it to `0700` before descending, never follows links, and leaves files with more than one hard link with their owner (reporting them), since another link could be outside the worktree. `/data` is `gm`'s with mode `0711`; other runs' worktrees stay mode `0700`. Commands enter their worktree only after switching user, because root without those capabilities cannot enter a `0700` directory it does not own.
 - The Unix socket is mode `0660`, group `gm-admin`. Operators reach it with `docker exec -u gm`; neither `gm-claude` nor `gm-tests` is in that group.
 - The test suite cannot approve, push or read git credentials, even though it is arbitrary repo code with Docker access.
+
+**Supervisor protocol.** The daemon asks the supervisor to start a process through a Unix socket, `/run/gm-supervisor/supervisor.sock` (mode `0600`, owned by `gm`, so only the daemon can ask; the supervisor also checks the peer's uid with `SO_PEERCRED`). The socket has its own root-owned directory because `/run/git-manager` belongs to `gm` and `gm-admin`, and the supervisor, without `CAP_DAC_OVERRIDE`, could not replace a stale socket there. The messages are defined once in `git_manager.isolation.models` and framed by `git_manager.isolation.wire`; the daemon's side is `SupervisedProcessRunner` over a `SupervisorChannel` protocol, so it is tested anywhere against a stand-in supervisor.
+
+- **Framing:** one connection per command; the daemon sends one `SpawnRequest` as a UTF-8 JSON line and reads one answer line (at most 64 MiB).
+- **Request:** `version` (1), `user` (`gm-claude` or `gm-tests`, never `gm` or root), `argv`, an absolute `cwd`, the complete `env`, an optional `timeout_s` and `stdin`.
+- **Environment:** the daemon builds `env` from an allowlist of its own variables (`PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`) plus what the caller passes; nothing else is inherited. The supervisor runs the command with exactly that environment (`env -i`), adding only `HOME`, `USER` and `LOGNAME` for the target user when `env` does not set them.
+- **Process group and timeout:** the command starts in a new session. When it exits, anything left in its group is killed. At `timeout_s` the group gets `SIGTERM`, then `SIGKILL` after a short grace period. Closing the connection before the answer also kills the group.
+- **Answers** (discriminated by `kind`): `completed` (exit code, negative for a signal; stdout; stderr; duration), `timed_out` (output read so far, duration) or `failed` with `start_failed` (program or `cwd` missing, raised to callers as `OSError`) or `invalid_request` (wrong version, user or fields, or refused by the policy below). Each of stdout and stderr keeps only its last 8 MiB, with a note of how much was dropped.
+- **Policy:** `cwd` must be inside `/data`. The supervisor refuses, as `invalid_request`, credential variables in `env` even though the daemon scrubs its own: `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK`, `GIT_ASKPASS`, `GIT_SSH_COMMAND` and similar, any `GM_*` setting except `GM_RUN_ID`, the Claude token for `gm-tests` and `DOCKER_*` for `gm-claude`.
+- **Handing over a worktree:** a `ChownRequest` (`kind: "chown"`, `user` (any of the three), an absolute `path` strictly inside `/data`) gives the tree to that user and its group, answered with `chowned` (listing hard-linked files left alone, see Process isolation) or `chown_failed` (`invalid_request`, or `failed` when a node could not be changed). A request without `kind` is a spawn, so the spawn messages are unchanged.
+- `gm` commands (git, gh) do not go through the supervisor: the daemon already runs as `gm` and starts them itself, with the same scrubbing, process group and timeout rules. Outside the container, `LocalProcessRunner` runs every command that way as the current user and logs once that process isolation is off.
 
 **Delivery plan**
 

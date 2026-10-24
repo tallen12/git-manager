@@ -1,3 +1,5 @@
+from collections.abc import AsyncGenerator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from pathlib import Path
 
 from pydantic import SecretStr
@@ -15,9 +17,9 @@ from git_manager.core import (
 async def test_local_target_uses_the_local_factory(service: Operations, tmp_path: Path) -> None:
     requested: list[LocalTarget] = []
 
-    def local(target: LocalTarget) -> Operations:
+    def local(target: LocalTarget) -> AbstractAsyncContextManager[Operations]:
         requested.append(target)
-        return service
+        return nullcontext(service)
 
     config = tmp_path / "config.yaml"
     config.touch()
@@ -31,12 +33,31 @@ async def test_local_target_uses_the_local_factory(service: Operations, tmp_path
 async def test_http_target_opens_api_client(service: Operations) -> None:
     target = HttpTarget(url="https://gm.test", token=SecretStr("token"))
 
-    async with build_connector(local=lambda _target: service)(target) as operations:
+    async with build_connector(local=lambda _target: nullcontext(service))(target) as operations:
         assert isinstance(operations, HttpOperations)
 
 
 async def test_socket_target_opens_api_client(service: Operations, tmp_path: Path) -> None:
     target = SocketTarget(socket=tmp_path / "api.sock")
 
-    async with build_connector(local=lambda _target: service)(target) as operations:
+    async with build_connector(local=lambda _target: nullcontext(service))(target) as operations:
         assert isinstance(operations, HttpOperations)
+
+
+async def test_local_target_closes_what_the_factory_opened(
+    service: Operations, tmp_path: Path
+) -> None:
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def local(_target: LocalTarget) -> AsyncGenerator[Operations]:
+        events.append("open")
+        yield service
+        events.append("close")
+
+    config = tmp_path / "config.yaml"
+    config.touch()
+    async with build_connector(local=local)(LocalTarget(config=config)):
+        assert events == ["open"]
+
+    assert events == ["open", "close"]

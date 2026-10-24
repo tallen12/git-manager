@@ -22,8 +22,14 @@ class Connector(Protocol):
     ) -> AbstractAsyncContextManager[Operations]: ...
 
 
-def build_connector(*, local: Callable[[LocalTarget], Operations]) -> Connector:
-    """Build the default connector: in-process for local mode, httpx for API mode."""
+def build_connector(
+    *, local: Callable[[LocalTarget], AbstractAsyncContextManager[Operations]]
+) -> Connector:
+    """Build the default connector: in-process for local mode, httpx for API mode.
+
+    ``local`` opens the in-process operations and owns what they hold (the config, the
+    data-directory lock, the store) until its block ends.
+    """
 
     @asynccontextmanager
     async def connect(
@@ -31,7 +37,8 @@ def build_connector(*, local: Callable[[LocalTarget], Operations]) -> Connector:
     ) -> AsyncGenerator[Operations]:
         match target:
             case LocalTarget():
-                yield local(target)
+                async with local(target) as operations:
+                    yield operations
             case HttpTarget(url=url, token=token):
                 headers = {"Authorization": f"Bearer {token.get_secret_value()}"}
                 async with httpx.AsyncClient(base_url=url, headers=headers) as client:

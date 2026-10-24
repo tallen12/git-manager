@@ -2,15 +2,17 @@
 
 from dataclasses import dataclass
 
-from git_manager.health import HealthReporter, HealthStatus
+from git_manager.branches.protocols import BranchOperations
+from git_manager.config.protocols import ConfigOperations
+from git_manager.health.protocols import HealthOperations
+from git_manager.rebasing.protocols import RunOperations
 
 
 @dataclass(frozen=True, slots=True)
 class Service:
-    """Runs operations in this process, against injected domain capabilities."""
+    """Runs operations in this process: one injected implementation per domain."""
 
-    reporter: HealthReporter
-
-    async def health(self) -> HealthStatus:
-        """Return the reporter's current status."""
-        return self.reporter.status()
+    health: HealthOperations
+    config: ConfigOperations
+    branches: BranchOperations
+    runs: RunOperations

@@ -1,27 +1,34 @@
 """CLI application and composition root."""
 
 import inspect
+import os
 import sys
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from pathlib import Path
 from typing import Annotated, NoReturn
 
 from cyclopts import App, CycloptsError, Parameter
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
+from git_manager.cli import branches, config, health, runs, server
+from git_manager.config import (
+    CheckoutRepoConfig,
+    ConfigReader,
+    RepoConfigSource,
+    YamlConfigFile,
+)
 from git_manager.core import (
-    ApiError,
-    ApiResponseError,
-    ApiUnreachableError,
     Connector,
     HttpTarget,
     LocalTarget,
-    Service,
+    Operations,
     Settings,
     SocketTarget,
     build_connector,
 )
-from git_manager.health import StaticHealthReporter
+from git_manager.core.compose import LocalRuntime, RuntimeOpener, open_local, process_runner
 from git_manager.metadata import package_version
 
 # Exit status for invalid settings, matching cyclopts' own usage errors.
@@ -64,44 +71,28 @@ def _settings(flags: Settings | None) -> Settings:
         _usage_error(error)
 
 
-def build_app(*, connect: Connector, version: str) -> App:
+def build_app(
+    *,
+    connect: Connector,
+    open_runtime: RuntimeOpener,
+    read_config: ConfigReader,
+    version: str,
+) -> App:
     """Build the CLI around injected capabilities.
 
     The target flags belong to the meta app, so they apply to every command. Commands
     that need a target declare ``settings`` with ``parse=False`` and receive the
-    validated ``Settings``; ``connect`` opens the operations for its target.
+    validated ``Settings``; ``connect`` opens the operations for its target,
+    ``open_runtime`` opens a local target's whole runtime for ``serve``, and
+    ``read_config`` opens a config file directly for process-level commands.
     """
     app = App(name="git-manager", help="Keep git branches rebased.", version=version)
-
-    @app.command
-    async def doctor(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
-        """Print the health status as JSON, in local or API mode."""
-        async with connect(settings.target) as operations:
-            try:
-                status = await operations.health()
-            except (ApiError, ApiResponseError, ApiUnreachableError) as error:
-                print(f"error: {error}", file=sys.stderr)
-                sys.exit(1)
-        print(status.model_dump_json())
-
-    @app.command
-    async def serve(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
-        """Start the daemon's REST server on --http.host and --http.port."""
-        from git_manager.web.app import serve as serve_rest
-
-        await serve_rest(
-            connect=connect, target=settings.target, http=settings.http, version=version
-        )
-
-    mcp = App(name="mcp", help="MCP interface.")
-    app.command(mcp)
-
-    @mcp.command
-    async def stdio(*, settings: Annotated[Settings, Parameter(parse=False)]) -> None:
-        """Serve MCP over stdio, in-process (local mode) or bridged to a daemon (API mode)."""
-        from git_manager.mcp.server import serve_stdio
-
-        await serve_stdio(connect=connect, target=settings.target, mcp=settings.mcp)
+    # One module per domain registers that domain's commands.
+    health.register(app, connect=connect)
+    config.register(app, connect=connect, read_config=read_config)
+    branches.register(app, connect=connect)
+    runs.register(app, connect=connect)
+    server.register(app, connect=connect, open_runtime=open_runtime, version=version)
 
     @app.meta.default
     async def launch(
@@ -129,10 +120,49 @@ def run(app: App, tokens: Sequence[str] | None = None) -> None:
         sys.exit(_USAGE_ERROR)
 
 
+def local_runtime(
+    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
+) -> RuntimeOpener:
+    """Open a local target through ``open_local`` with this process's runner."""
+
+    def open_runtime(target: LocalTarget) -> AbstractAsyncContextManager[LocalRuntime]:
+        return open_local(
+            target,
+            environ=environ,
+            repo_config=repo_config,
+            runner=process_runner(environ),
+            version=version,
+        )
+
+    return open_runtime
+
+
+def local_connector(
+    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
+) -> Connector:
+    """The connector ``main`` uses: local mode through ``open_local``, API mode over httpx."""
+    open_runtime = local_runtime(environ=environ, repo_config=repo_config, version=version)
+
+    @asynccontextmanager
+    async def local(target: LocalTarget) -> AsyncGenerator[Operations]:
+        async with open_runtime(target) as opened:
+            yield opened.service
+
+    return build_connector(local=local)
+
+
 def main() -> None:
     """Wire concrete implementations and run the CLI."""
     version = package_version()
-    service = Service(reporter=StaticHealthReporter(version=version))
-    # Local mode will load the target's config file once config lands (M1).
-    connect = build_connector(local=lambda _target: service)
-    run(build_app(connect=connect, version=version))
+    repo_config = CheckoutRepoConfig()
+
+    def read_config(path: Path) -> YamlConfigFile:
+        return YamlConfigFile(path, environ=os.environ, repo_config=repo_config)
+
+    connect = local_connector(environ=os.environ, repo_config=repo_config, version=version)
+    open_runtime = local_runtime(environ=os.environ, repo_config=repo_config, version=version)
+    run(
+        build_app(
+            connect=connect, open_runtime=open_runtime, read_config=read_config, version=version
+        )
+    )

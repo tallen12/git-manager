@@ -1,98 +1,32 @@
 import httpx
 import pytest
 
-from git_manager.core.http_operations import (
-    MAX_DETAIL_LENGTH,
-    ApiError,
-    ApiResponseError,
-    ApiUnreachableError,
-    HttpOperations,
-)
+from git_manager.core import HttpOperations, Operations, UnavailableError
 from git_manager.health import HealthStatus
 
 
-async def test_health_parses_the_response_body() -> None:
+async def test_health_goes_through_the_api() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/healthz"
         return httpx.Response(200, json={"status": "ok", "version": "1.2.3"})
 
-    transport = httpx.MockTransport(respond)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        status = await HttpOperations(client).health()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://test"
+    ) as client:
+        operations: Operations = HttpOperations(client)
+        status = await operations.health.status()
 
     assert status == HealthStatus(status="ok", version="1.2.3")
 
 
-async def test_error_status_raises_api_error() -> None:
-    transport = httpx.MockTransport(lambda _request: httpx.Response(403, text="missing scope"))
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        with pytest.raises(ApiError) as raised:
-            await HttpOperations(client).health()
-
-    assert raised.value.status_code == 403
-    assert raised.value.detail == "missing scope"
-
-
-async def test_transport_failure_raises_unreachable() -> None:
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
+async def test_operations_not_in_the_api_yet_point_to_local_mode() -> None:
+    def fail(request: httpx.Request) -> httpx.Response:
+        msg = f"unexpected request {request.url}"
+        raise AssertionError(msg)
 
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(refuse), base_url="http://test"
+        transport=httpx.MockTransport(fail), base_url="http://test"
     ) as client:
-        with pytest.raises(ApiUnreachableError, match="connection refused"):
-            await HttpOperations(client).health()
-
-
-async def test_fastapi_error_detail_is_unwrapped() -> None:
-    transport = httpx.MockTransport(
-        lambda _request: httpx.Response(401, json={"detail": "Not authenticated"})
-    )
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        with pytest.raises(ApiError) as raised:
-            await HttpOperations(client).health()
-
-    assert raised.value.detail == "Not authenticated"
-
-
-async def test_long_error_body_is_truncated() -> None:
-    page = "<html>" + "x" * 5000 + "</html>"
-    transport = httpx.MockTransport(lambda _request: httpx.Response(502, text=page))
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        with pytest.raises(ApiError) as raised:
-            await HttpOperations(client).health()
-
-    assert raised.value.detail == page[:MAX_DETAIL_LENGTH] + "..."
-
-
-async def test_unexpected_body_raises_response_error() -> None:
-    transport = httpx.MockTransport(lambda _request: httpx.Response(200, text="<html></html>"))
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        with pytest.raises(ApiResponseError, match="unexpected response from http://test/healthz"):
-            await HttpOperations(client).health()
-
-
-async def test_validation_error_detail_lists_each_issue() -> None:
-    body = {
-        "detail": [
-            {"type": "missing", "loc": ["body", "branch"], "msg": "Field required"},
-            {"type": "int_parsing", "loc": ["query", "limit"], "msg": "Input should be int"},
-        ]
-    }
-    transport = httpx.MockTransport(lambda _request: httpx.Response(422, json=body))
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        with pytest.raises(ApiError) as raised:
-            await HttpOperations(client).health()
-
-    assert raised.value.detail == "body.branch: Field required; query.limit: Input should be int"
-
-
-async def test_unexpected_body_error_hides_url_password() -> None:
-    transport = httpx.MockTransport(lambda _request: httpx.Response(200, text="<html></html>"))
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://alice:hunter2@test"
-    ) as client:
-        with pytest.raises(ApiResponseError) as raised:
-            await HttpOperations(client).health()
-
-    assert "hunter2" not in str(raised.value)
+        operations = HttpOperations(client)
+        with pytest.raises(UnavailableError, match="local mode"):
+            await operations.branches.status()
