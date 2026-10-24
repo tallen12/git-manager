@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -15,6 +16,7 @@ import httpx
 import pytest
 from cyclopts import App
 
+from git_manager.branches.sync import SyncMode
 from git_manager.cli.main import build_app, local_connector, local_runtime
 from git_manager.cli.output import EXIT_FAILED
 from git_manager.config import CheckoutRepoConfig, YamlConfigFile
@@ -122,7 +124,9 @@ def app() -> App:
 
     return build_app(
         connect=local_connector(environ=environ, repo_config=repo_config, version=TEST_VERSION),
-        open_runtime=local_runtime(environ=environ, repo_config=repo_config, version=TEST_VERSION),
+        open_runtime=local_runtime(
+            environ=environ, repo_config=repo_config, version=TEST_VERSION, sync=SyncMode.QUEUED
+        ),
         read_config=read_config,
         version=TEST_VERSION,
     )
@@ -193,3 +197,58 @@ def test_serve_without_a_tokens_file_fails_and_releases_the_data_directory(
     assert status == EXIT_FAILED
     assert capsys.readouterr().err == f"error: {NO_TOKENS_FILE}\n"
     assert not locked(tmp_path / "data")
+
+
+def test_sync_through_the_daemon_queues_the_run(
+    app: App,
+    remote: Remote,
+    tokens_file: Path,
+    api_socket: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_file = tmp_path / "manual.yaml"
+    config_file.write_text(
+        f"repo:\n  url: {remote.bare}\n  data_dir: {tmp_path / 'data'}\n"
+        "defaults:\n  poll_interval: 100ms\n  cadence: {mode: manual}\n"
+        "  verify:\n    test: 'true'\n    docker: {mode: none}\n",
+        encoding="utf-8",
+    )
+    assert (
+        run_cli(app, ["track", "feature/one", "--base", "main", "--config", str(config_file)]) == 0
+    )
+    old_parent = git(remote.bare, "rev-parse", "refs/heads/feature/one~1")
+    port = free_port()
+    daemon = subprocess.Popen(
+        [*ENTRY_POINT, "serve", "--config", str(config_file), "--http.port", str(port)],
+        env={
+            **os.environ,
+            "GM_HTTP__TOKENS_FILE": str(tokens_file),
+            "GM_HTTP__SOCKET": str(api_socket),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        eventually(lambda: healthy(port))
+        new_base = commit(remote.teammate, "other.txt", "base work\n", "main moves")
+        git(remote.teammate, "push", "--quiet", "origin", "main")
+        # Manual cadence: the poller sees the base move but never runs on its own.
+        time.sleep(2)
+        assert git(remote.bare, "rev-parse", "refs/heads/feature/one~1") == old_parent
+        capsys.readouterr()
+
+        status = run_cli(app, ["sync", "feature/one", "--socket", str(api_socket)])
+
+        assert status == 0
+        assert re.fullmatch(r"queued \S+ behind 0 other run\(s\)\n", capsys.readouterr().out)
+        eventually(lambda: git(remote.bare, "rev-parse", "refs/heads/feature/one~1") == new_base)
+        daemon.send_signal(signal.SIGTERM)
+        output, _ = daemon.communicate(timeout=30)
+    finally:
+        if daemon.poll() is None:
+            daemon.kill()
+            daemon.communicate()
+
+    assert daemon.returncode == 0, output

@@ -22,7 +22,8 @@ from git_manager.web.errors import ERROR_RESPONSES
 REPO_PATH = f"{API_PREFIX}/repo"
 BRANCHES_PATH = f"{API_PREFIX}/branches"
 _BRANCH_PATH = f"{BRANCHES_PATH}/{{branch:path}}"
-# Local mode's sync runs the rebase while the request waits: as long as its tests take.
+# The daemon only queues a sync, but REST served over a local target (``web.app.serve``)
+# runs it while the request waits: as long as its tests take.
 SYNC_TIMEOUT = httpx.Timeout(10.0, read=None)
 
 _STATUS = TypeAdapter(RepoStatus)

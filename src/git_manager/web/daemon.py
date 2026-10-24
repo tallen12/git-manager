@@ -10,7 +10,6 @@ from typing import Protocol
 
 from git_manager.branches.daemon import DEFAULT_TICK, AsyncioSleeper, Daemon
 from git_manager.branches.poller import Poller
-from git_manager.branches.queue import FifoRunQueue
 from git_manager.core.compose import LocalRuntime
 from git_manager.web.app import rest_servers
 from git_manager.web.settings import HttpSettings
@@ -112,7 +111,8 @@ async def serve_daemon(
     only after the last run has finished. Raises ``TokensFileError``, before polling or
     serving, when ``http`` has no valid tokens file.
     """
-    queue = FifoRunQueue(clock=runtime.clock)
+    # The queue the service's sync feeds when ``runtime`` was opened with SyncMode.QUEUED.
+    queue = runtime.queue
     poller = Poller(
         git=runtime.git,
         branches=runtime.branches,

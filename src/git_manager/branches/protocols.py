@@ -67,6 +67,11 @@ class RunQueue(RunScheduler, Protocol):
         """Runs waiting for their turn, next first."""
         ...
 
+    @property
+    def active(self) -> QueuedRun | None:
+        """The run handed out by ``take`` and not finished yet."""
+        ...
+
     def take(self) -> AbstractAsyncContextManager[QueuedRun]:
         """Wait until no run is active and one is waiting, then hold it until the block ends.
 

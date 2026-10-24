@@ -12,6 +12,7 @@ from cyclopts import App, CycloptsError, Parameter
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
+from git_manager.branches.sync import SyncMode
 from git_manager.cli import branches, config, events, health, runs, server
 from git_manager.cli.events import NotifierFactory
 from git_manager.config import (
@@ -133,9 +134,13 @@ def run(app: App, tokens: Sequence[str] | None = None) -> None:
 
 
 def local_runtime(
-    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
+    *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str, sync: SyncMode
 ) -> RuntimeOpener:
-    """Open a local target through ``open_local`` with this process's runner."""
+    """Open a local target through ``open_local`` with this process's runner.
+
+    ``serve`` opens it with ``SyncMode.QUEUED``, so a sync joins the daemon's run queue;
+    local-mode commands use ``SyncMode.FOREGROUND``.
+    """
 
     def open_runtime(target: LocalTarget) -> AbstractAsyncContextManager[LocalRuntime]:
         return open_local(
@@ -144,6 +149,7 @@ def local_runtime(
             repo_config=repo_config,
             runner=process_runner(environ),
             version=version,
+            sync=sync,
         )
 
     return open_runtime
@@ -153,7 +159,9 @@ def local_connector(
     *, environ: Mapping[str, str], repo_config: RepoConfigSource, version: str
 ) -> Connector:
     """The connector ``main`` uses: local mode through ``open_local``, API mode over httpx."""
-    open_runtime = local_runtime(environ=environ, repo_config=repo_config, version=version)
+    open_runtime = local_runtime(
+        environ=environ, repo_config=repo_config, version=version, sync=SyncMode.FOREGROUND
+    )
 
     @asynccontextmanager
     async def local(target: LocalTarget) -> AsyncGenerator[Operations]:
@@ -172,7 +180,9 @@ def main() -> None:
         return YamlConfigFile(path, environ=os.environ, repo_config=repo_config)
 
     connect = local_connector(environ=os.environ, repo_config=repo_config, version=version)
-    open_runtime = local_runtime(environ=os.environ, repo_config=repo_config, version=version)
+    open_runtime = local_runtime(
+        environ=os.environ, repo_config=repo_config, version=version, sync=SyncMode.QUEUED
+    )
 
     def notifier() -> Notifier | None:
         runner = LocalProcessRunner(inherited=os.environ)
